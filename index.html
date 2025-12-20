@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Gemini 3 Pro Image Preview API 调用器</title>
-  <meta name="description" content="基于 GitHub Pages 的 gemini-3-pro-image-preview（Nano Banana Pro）图像生成/编辑 API 调用器" />
+  <meta name="description" content="基于 GitHub Pages 的 gemini-3-pro-image-preview 图像生成/编辑 API 调用器" />
   <link rel="stylesheet" href="./style.css" />
 </head>
 
@@ -12,12 +12,28 @@
   <header class="header">
     <div class="container">
       <div class="title-row">
-        <h1 class="title">Gemini 3 Pro Image Preview API 调用器</h1>
-        <span class="badge">GitHub Pages / iOS / Android</span>
+        <div class="title-left">
+          <h1 class="title">Gemini 3 Pro Image Preview API 调用器</h1>
+          <p class="subtitle">
+            支持：Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP / 预设 / JSON 请求体
+          </p>
+        </div>
+
+        <div class="presetbar" aria-label="预设工具栏">
+          <select id="presetSelect" class="presetSelect" title="选择预设">
+            <option value="">（无预设）</option>
+          </select>
+          <button id="presetSave" type="button" class="btn secondary">保存为预设</button>
+          <button id="presetUpdate" type="button" class="btn secondary" disabled>更新预设</button>
+          <button id="presetDelete" type="button" class="btn secondary" disabled>删除预设</button>
+          <button id="presetExport" type="button" class="btn secondary">导出</button>
+
+          <label class="btn secondary filebtn" title="导入预设（JSON）">
+            导入
+            <input id="presetImport" type="file" accept="application/json" />
+          </label>
+        </div>
       </div>
-      <p class="subtitle">
-        支持：Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP
-      </p>
     </div>
   </header>
 
@@ -25,160 +41,87 @@
     <section class="card">
       <h2 class="section-title">配置</h2>
 
-      <form id="form" class="grid" autocomplete="off">
-        <label class="field">
-          <span class="label">API 主机地址（可选）</span>
-          <input id="apiHost" type="text" inputmode="url" placeholder="留空则使用 Google 官方主机" />
-          <span class="hint">示例：填入你的反代/网关域名；留空默认官方。</span>
-        </label>
+      <form id="form" autocomplete="off">
+        <!-- Host / Key 区：不随预设变化 -->
+        <div class="grid">
+          <label class="field">
+            <span class="label">API 主机地址（可选）</span>
+            <input id="apiHost" type="text" inputmode="url" placeholder="留空则使用 Google 官方主机" />
+            <span class="hint">可填入你的反代/网关域名；留空默认官方。</span>
+          </label>
 
-        <label class="field">
-          <span class="label">API Key</span>
-          <input id="apiKey" type="password" placeholder="粘贴你的 Gemini API Key" />
-          <div class="row">
-            <label class="checkbox">
-              <input id="rememberKey" type="checkbox" />
-              <span>在本机保存 Key（localStorage）</span>
+          <label class="field">
+            <span class="label">API Key</span>
+            <input id="apiKey" type="password" placeholder="粘贴你的 Gemini API Key" />
+            <div class="row">
+              <label class="checkbox">
+                <input id="rememberKey" type="checkbox" />
+                <span>在本机保存 Key（localStorage）</span>
+              </label>
+              <label class="checkbox">
+                <input id="useHeaderKey" type="checkbox" />
+                <span>把 Key 放到 Header（x-goog-api-key）</span>
+              </label>
+            </div>
+            <span class="hint">安全建议：对 Key 做来源域名限制。GitHub Pages 为纯前端，无法真正隐藏 Key。</span>
+          </label>
+        </div>
+
+        <!-- 模式切换 -->
+        <div class="modebar" role="tablist" aria-label="请求体编辑模式">
+          <button id="modeForm" type="button" class="seg active" role="tab" aria-selected="true">表单模式</button>
+          <button id="modeJson" type="button" class="seg" role="tab" aria-selected="false">JSON 模式</button>
+        </div>
+
+        <!-- 表单模式区域 -->
+        <div id="formModeWrap">
+          <div class="grid">
+            <label class="field full">
+              <span class="label">系统提示词（可选）</span>
+              <textarea id="systemPrompt" rows="3" placeholder="例如：你是一个专业平面设计师，输出图片需要干净背景、柔光、高清。"></textarea>
             </label>
-            <label class="checkbox">
-              <input id="useHeaderKey" type="checkbox" />
-              <span>把 Key 放到 Header（x-goog-api-key）</span>
+
+            <label class="field full">
+              <span class="label">提示词（必填）</span>
+              <textarea id="prompt" rows="5" placeholder="例如：生成一张极简风的咖啡品牌海报，包含清晰可读的标题文字“MOONBEAN”，风格高级。"></textarea>
             </label>
-          </div>
-          <span class="hint">如不勾选“保存”，刷新页面后不会保留 Key。</span>
-        </label>
 
-        <label class="field full">
-          <span class="label">系统提示词（可选）</span>
-          <textarea id="systemPrompt" rows="3" placeholder="例如：你是一个专业平面设计师，输出图片需要干净背景、柔光、高清。"></textarea>
-        </label>
+            <div class="field full">
+              <span class="label">输入图片（可选，用于图像编辑/参考）</span>
+              <div id="dropZone" class="dropzone" role="button" tabindex="0">
+                <div class="dz-main">
+                  <strong>拖拽图片到这里</strong>
+                  <span>或点击选择文件（PNG/JPEG/WebP/HEIC 等）</span>
+                </div>
+                <input id="imageFile" type="file" accept="image/*" />
+              </div>
 
-        <label class="field full">
-          <span class="label">提示词（必填）</span>
-          <textarea id="prompt" rows="5" placeholder="例如：生成一张极简风的咖啡品牌海报，包含清晰可读的标题文字“MOONBEAN”，风格高级。"></textarea>
-        </label>
+              <div id="imagePreview" class="preview hidden">
+                <img id="imagePreviewImg" alt="输入图片预览" />
+                <div class="preview-meta">
+                  <div id="imageMeta"></div>
+                  <button id="clearImage" type="button" class="btn secondary">移除图片</button>
+                </div>
+              </div>
 
-        <div class="field full">
-          <span class="label">输入图片（可选，用于图像编辑/参考）</span>
-          <div id="dropZone" class="dropzone" role="button" tabindex="0">
-            <div class="dz-main">
-              <strong>拖拽图片到这里</strong>
-              <span>或点击选择文件（PNG/JPEG/WebP/HEIC 等）</span>
+              <span class="hint">上传图片后，可在提示词中写“把这张图改成…… / 在保持主体不变的情况下……”</span>
             </div>
-            <input id="imageFile" type="file" accept="image/*" />
-          </div>
-          <div id="imagePreview" class="preview hidden">
-            <img id="imagePreviewImg" alt="输入图片预览" />
-            <div class="preview-meta">
-              <div id="imageMeta"></div>
-              <button id="clearImage" type="button" class="btn secondary">移除图片</button>
-            </div>
-          </div>
-          <span class="hint">如果你上传了图片，提示词可写“把这张图改成…… / 在保持主体不变的情况下……”</span>
-        </div>
 
-        <label class="field">
-          <span class="label">生成图片比例（可选）</span>
-          <select id="aspectRatio">
-            <option value="">默认（模型自行选择）</option>
-            <option value="1:1">1:1</option>
-            <option value="2:3">2:3</option>
-            <option value="3:2">3:2</option>
-            <option value="3:4">3:4</option>
-            <option value="4:3">4:3</option>
-            <option value="4:5">4:5</option>
-            <option value="5:4">5:4</option>
-            <option value="9:16">9:16</option>
-            <option value="16:9">16:9</option>
-            <option value="21:9">21:9</option>
-          </select>
-        </label>
+            <label class="field">
+              <span class="label">生成图片比例（可选）</span>
+              <select id="aspectRatio">
+                <option value="">默认（模型自行选择）</option>
+                <option value="1:1">1:1</option>
+                <option value="2:3">2:3</option>
+                <option value="3:2">3:2</option>
+                <option value="3:4">3:4</option>
+                <option value="4:3">4:3</option>
+                <option value="4:5">4:5</option>
+                <option value="5:4">5:4</option>
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+                <option value="21:9">21:9</option>
+              </select>
+            </label>
 
-        <label class="field">
-          <span class="label">分辨率（可选）</span>
-          <select id="imageSize">
-            <option value="">默认（1K）</option>
-            <option value="1K">1K</option>
-            <option value="2K">2K</option>
-            <option value="4K">4K</option>
-          </select>
-          <span class="hint">4K 成本更高、延迟更大。</span>
-        </label>
-
-        <label class="field">
-          <span class="label">Temperature（可选，0–2）</span>
-          <input id="temperature" type="number" inputmode="decimal" min="0" max="2" step="0.1" placeholder="留空使用模型默认" />
-        </label>
-
-        <label class="field">
-          <span class="label">TopP（可选，0–1）</span>
-          <input id="topP" type="number" inputmode="decimal" min="0" max="1" step="0.05" placeholder="留空使用模型默认" />
-        </label>
-
-        <div class="actions full">
-          <button id="runBtn" class="btn primary" type="submit">调用 API 生成</button>
-          <button id="resetBtn" class="btn secondary" type="button">重置（不清 Key，除非你取消保存）</button>
-        </div>
-
-        <div class="full">
-          <div id="status" class="status hidden"></div>
-        </div>
-      </form>
-    </section>
-
-    <section class="card">
-      <h2 class="section-title">结果</h2>
-
-      <div id="resultEmpty" class="empty">
-        尚未生成。提交后会在这里显示图片与返回文本。
-      </div>
-
-      <div id="result" class="hidden">
-        <div class="result-head">
-          <div>
-            <div class="kpi">
-              <span class="kpi-label">模型</span>
-              <span class="kpi-value" id="modelName"></span>
-            </div>
-            <div class="kpi">
-              <span class="kpi-label">耗时</span>
-              <span class="kpi-value" id="latency"></span>
-            </div>
-          </div>
-
-          <div class="result-actions">
-            <button id="copyCurl" type="button" class="btn secondary">复制 cURL</button>
-            <button id="copyJson" type="button" class="btn secondary">复制请求 JSON</button>
-          </div>
-        </div>
-
-        <div id="textOutWrap" class="block hidden">
-          <h3 class="block-title">文本输出</h3>
-          <pre id="textOut" class="pre"></pre>
-        </div>
-
-        <div id="imagesOutWrap" class="block hidden">
-          <h3 class="block-title">图片输出</h3>
-          <div id="imagesOut" class="gallery"></div>
-          <p class="hint">
-            iOS Safari 如遇“下载”不生效，请点击“打开原图”后长按图片保存到相册。
-          </p>
-        </div>
-
-        <details class="details">
-          <summary>查看原始响应 JSON</summary>
-          <pre id="rawJson" class="pre"></pre>
-        </details>
-      </div>
-    </section>
-
-    <footer class="footer">
-      <p class="footnote">
-        说明：本页面仅做前端调用封装。请妥善保护 API Key，并建议对 Key 做来源域名限制。
-      </p>
-    </footer>
-  </main>
-
-  <script type="module" src="./app.js"></script>
-</body>
-</html>
+            <label class="
