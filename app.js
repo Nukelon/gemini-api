@@ -2,14 +2,65 @@ const MODEL_ID = "gemini-3-pro-image-preview";
 const DEFAULT_HOST = "https://generativelanguage.googleapis.com";
 const API_PATH = `/v1beta/models/${MODEL_ID}:generateContent`;
 
+// ----- utils -----
 const $ = (id) => document.getElementById(id);
 
+function stripTrailingSlash(s) { return s.replace(/\/+$/, ""); }
+
+function safeNumberOrEmpty(v) {
+  const t = String(v ?? "").trim();
+  if (!t) return "";
+  const n = Number(t);
+  return Number.isFinite(n) ? n : "";
+}
+
+function humanBytes(bytes) {
+  const units = ["B", "KB", "MB", "GB"];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function base64FromArrayBuffer(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function nowISO() { return new Date().toISOString(); }
+
+function isLikelyNetworkError(err) {
+  // Safari/Chromium: fetch network errors often surface as TypeError
+  const name = String(err?.name || "");
+  const msg = String(err?.message || "");
+  if (name === "TypeError") return true;
+  if (/network/i.test(msg)) return true;
+  if (/load failed/i.test(msg)) return true; // Safari
+  return false;
+}
+
+// ----- DOM -----
 const els = {
   form: $("form"),
+
+  // fixed
   apiHost: $("apiHost"),
   apiKey: $("apiKey"),
   rememberKey: $("rememberKey"),
   useHeaderKey: $("useHeaderKey"),
+
+  // mode switch
+  modeForm: $("modeForm"),
+  modeJson: $("modeJson"),
+  formModeWrap: $("formModeWrap"),
+  jsonModeWrap: $("jsonModeWrap"),
+
+  // form fields
   systemPrompt: $("systemPrompt"),
   prompt: $("prompt"),
   imageFile: $("imageFile"),
@@ -22,10 +73,27 @@ const els = {
   imageSize: $("imageSize"),
   temperature: $("temperature"),
   topP: $("topP"),
+
+  // json editor
+  requestBodyJson: $("requestBodyJson"),
+  jsonFormat: $("jsonFormat"),
+  jsonFromForm: $("jsonFromForm"),
+  jsonToForm: $("jsonToForm"),
+
+  // presets
+  presetSelect: $("presetSelect"),
+  presetSave: $("presetSave"),
+  presetUpdate: $("presetUpdate"),
+  presetDelete: $("presetDelete"),
+  presetExport: $("presetExport"),
+  presetImport: $("presetImport"),
+
+  // actions
   runBtn: $("runBtn"),
   resetBtn: $("resetBtn"),
   status: $("status"),
 
+  // result
   resultEmpty: $("resultEmpty"),
   result: $("result"),
   modelName: $("modelName"),
@@ -39,68 +107,55 @@ const els = {
   rawJson: $("rawJson"),
 };
 
+// ----- storage keys -----
 const storageKeys = {
   host: "g3_host",
   rememberKey: "g3_remember_key",
   apiKey: "g3_api_key",
   useHeaderKey: "g3_use_header_key",
+
+  // last UI state
+  uiMode: "g3_ui_mode",
+  requestBodyJson: "g3_request_body_json",
+
+  // form values
   systemPrompt: "g3_system_prompt",
   aspectRatio: "g3_aspect_ratio",
   imageSize: "g3_image_size",
   temperature: "g3_temperature",
   topP: "g3_topP",
+
+  // presets storage
+  presets: "g3_presets_v1",
+  activePreset: "g3_active_preset_name",
 };
 
-let selectedImage = null; // { file, mimeType, base64, size, name, dataUrl }
+// ----- state -----
+let uiMode = "form"; // "form" | "json"
+let selectedImage = null; // { mimeType, base64, size, name, dataUrl }
 let lastRequest = null;   // { url, headers, body }
-let objectUrls = [];      // generated blob URLs for cleanup
+let objectUrls = [];      // blob URLs for output images
 
+// iOS background mitigation
+let requestInFlight = false;
+let hiddenDuringRequest = false;
+let wakeLock = null;
+
+// ----- status -----
 function setStatus(msg, visible = true) {
   els.status.textContent = msg || "";
   els.status.classList.toggle("hidden", !visible);
 }
 
-function humanBytes(bytes) {
-  const units = ["B", "KB", "MB", "GB"];
-  let v = bytes;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-function stripTrailingSlash(s) {
-  return s.replace(/\/+$/, "");
-}
-
-function safeNumberOrEmpty(v) {
-  const t = String(v ?? "").trim();
-  if (!t) return "";
-  const n = Number(t);
-  return Number.isFinite(n) ? n : "";
-}
-
-function base64FromArrayBuffer(buf) {
-  // Avoid stack overflow for large buffers
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
+// ----- image helpers -----
 async function readImageFile(file) {
   const mimeType = file.type || "application/octet-stream";
   const size = file.size;
   const name = file.name || "image";
   const arrayBuf = await file.arrayBuffer();
   const base64 = base64FromArrayBuffer(arrayBuf);
-
-  // For preview only (smaller & faster)
-  const dataUrl = URL.createObjectURL(file);
-
-  return { file, mimeType, size, name, base64, dataUrl };
+  const dataUrl = URL.createObjectURL(file); // preview only
+  return { mimeType, size, name, base64, dataUrl };
 }
 
 function clearSelectedImage() {
@@ -109,7 +164,7 @@ function clearSelectedImage() {
   els.imagePreview.classList.add("hidden");
   els.imagePreviewImg.src = "";
   els.imageMeta.textContent = "";
-  els.imageFile.value = "";
+  if (els.imageFile) els.imageFile.value = "";
 }
 
 function showSelectedImage(info) {
@@ -118,62 +173,52 @@ function showSelectedImage(info) {
   els.imagePreview.classList.remove("hidden");
 }
 
-function persist() {
-  localStorage.setItem(storageKeys.host, els.apiHost.value.trim());
-  localStorage.setItem(storageKeys.rememberKey, String(els.rememberKey.checked));
-  localStorage.setItem(storageKeys.useHeaderKey, String(els.useHeaderKey.checked));
-  localStorage.setItem(storageKeys.systemPrompt, els.systemPrompt.value);
-  localStorage.setItem(storageKeys.aspectRatio, els.aspectRatio.value);
-  localStorage.setItem(storageKeys.imageSize, els.imageSize.value);
-  localStorage.setItem(storageKeys.temperature, els.temperature.value);
-  localStorage.setItem(storageKeys.topP, els.topP.value);
+function b64ToBlobUrl(b64, mimeType) {
+  const binary = atob(b64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  objectUrls.push(url);
+  return { url, blob };
+}
 
-  if (els.rememberKey.checked) {
-    localStorage.setItem(storageKeys.apiKey, els.apiKey.value);
-  } else {
-    localStorage.removeItem(storageKeys.apiKey);
+function cleanupObjectUrls() {
+  for (const u of objectUrls) URL.revokeObjectURL(u);
+  objectUrls = [];
+}
+
+// ----- wake lock (best-effort) -----
+async function requestWakeLock() {
+  try {
+    if (!("wakeLock" in navigator)) return;
+    if (wakeLock) return;
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch {
+    // ignore
   }
 }
 
-function restore() {
-  els.apiHost.value = localStorage.getItem(storageKeys.host) || "";
-  els.rememberKey.checked = (localStorage.getItem(storageKeys.rememberKey) || "false") === "true";
-  els.useHeaderKey.checked = (localStorage.getItem(storageKeys.useHeaderKey) || "false") === "true";
-  els.systemPrompt.value = localStorage.getItem(storageKeys.systemPrompt) || "";
-  els.aspectRatio.value = localStorage.getItem(storageKeys.aspectRatio) || "";
-  els.imageSize.value = localStorage.getItem(storageKeys.imageSize) || "";
-  els.temperature.value = localStorage.getItem(storageKeys.temperature) || "";
-  els.topP.value = localStorage.getItem(storageKeys.topP) || "";
-
-  const savedKey = localStorage.getItem(storageKeys.apiKey) || "";
-  if (els.rememberKey.checked && savedKey) {
-    els.apiKey.value = savedKey;
-  }
+function releaseWakeLock() {
+  try { wakeLock?.release?.(); } catch {}
+  wakeLock = null;
 }
 
-function buildRequest() {
-  const host = stripTrailingSlash(els.apiHost.value.trim() || DEFAULT_HOST);
-  const apiKey = els.apiKey.value.trim();
-  const useHeaderKey = els.useHeaderKey.checked;
-
+// ----- build body (form mode) -----
+function buildBodyFromForm() {
   const systemPrompt = els.systemPrompt.value.trim();
   const prompt = els.prompt.value.trim();
-
   const aspectRatio = els.aspectRatio.value;
   const imageSize = els.imageSize.value;
 
   const temperature = safeNumberOrEmpty(els.temperature.value);
   const topP = safeNumberOrEmpty(els.topP.value);
 
-  if (!apiKey) throw new Error("请填写 API Key。");
   if (!prompt) throw new Error("请填写提示词（必填）。");
 
-  const url = useHeaderKey
-    ? `${host}${API_PATH}`
-    : `${host}${API_PATH}?key=${encodeURIComponent(apiKey)}`;
-
   const parts = [{ text: prompt }];
-
   if (selectedImage) {
     parts.push({
       inline_data: {
@@ -208,9 +253,35 @@ function buildRequest() {
     if (imageSize) body.generationConfig.imageConfig.imageSize = imageSize;
   }
 
-  const headers = {
-    "Content-Type": "application/json",
-  };
+  return body;
+}
+
+// ----- build request (host/key fixed; body depends on mode) -----
+function buildRequest() {
+  const host = stripTrailingSlash(els.apiHost.value.trim() || DEFAULT_HOST);
+  const apiKey = els.apiKey.value.trim();
+  const useHeaderKey = els.useHeaderKey.checked;
+
+  if (!apiKey) throw new Error("请填写 API Key。");
+
+  const url = useHeaderKey
+    ? `${host}${API_PATH}`
+    : `${host}${API_PATH}?key=${encodeURIComponent(apiKey)}`;
+
+  let body;
+  if (uiMode === "json") {
+    const raw = els.requestBodyJson.value.trim();
+    if (!raw) throw new Error("JSON 模式下请求体不能为空。");
+    try {
+      body = JSON.parse(raw);
+    } catch (e) {
+      throw new Error(`JSON 解析失败：${e?.message || e}`);
+    }
+  } else {
+    body = buildBodyFromForm();
+  }
+
+  const headers = { "Content-Type": "application/json" };
   if (useHeaderKey) headers["x-goog-api-key"] = apiKey;
 
   return { url, headers, body };
@@ -229,22 +300,7 @@ function makeCurl({ url, headers, body }) {
   ].join("\n");
 }
 
-function cleanupObjectUrls() {
-  for (const u of objectUrls) URL.revokeObjectURL(u);
-  objectUrls = [];
-}
-
-function b64ToBlobUrl(b64, mimeType) {
-  const binary = atob(b64);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-  const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  objectUrls.push(url);
-  return { url, blob };
-}
-
+// ----- render -----
 function timestampTag() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -260,7 +316,6 @@ function renderResult({ data, ms }) {
 
   els.rawJson.textContent = JSON.stringify(data, null, 2);
 
-  // Extract parts (text + images)
   const candidates = data?.candidates || [];
   const first = candidates[0]?.content?.parts || [];
   const texts = [];
@@ -271,8 +326,6 @@ function renderResult({ data, ms }) {
       texts.push(p.text);
       continue;
     }
-
-    // Response can be inlineData (camelCase) or inline_data (snake_case)
     const inline = p.inlineData || p.inline_data;
     if (inline?.data) {
       const mimeType = inline.mimeType || inline.mime_type || "image/png";
@@ -280,7 +333,6 @@ function renderResult({ data, ms }) {
     }
   }
 
-  // Text
   if (texts.length) {
     els.textOutWrap.classList.remove("hidden");
     els.textOut.textContent = texts.join("\n\n---\n\n");
@@ -289,7 +341,6 @@ function renderResult({ data, ms }) {
     els.textOut.textContent = "";
   }
 
-  // Images
   els.imagesOut.innerHTML = "";
   cleanupObjectUrls();
 
@@ -356,8 +407,491 @@ function renderResult({ data, ms }) {
   }
 }
 
+// ----- persistence (non-preset state) -----
+function persistBase() {
+  localStorage.setItem(storageKeys.host, els.apiHost.value.trim());
+  localStorage.setItem(storageKeys.rememberKey, String(els.rememberKey.checked));
+  localStorage.setItem(storageKeys.useHeaderKey, String(els.useHeaderKey.checked));
+
+  localStorage.setItem(storageKeys.uiMode, uiMode);
+  localStorage.setItem(storageKeys.requestBodyJson, els.requestBodyJson.value);
+
+  // Keep some last used form values for convenience (not presets)
+  localStorage.setItem(storageKeys.systemPrompt, els.systemPrompt.value);
+  localStorage.setItem(storageKeys.aspectRatio, els.aspectRatio.value);
+  localStorage.setItem(storageKeys.imageSize, els.imageSize.value);
+  localStorage.setItem(storageKeys.temperature, els.temperature.value);
+  localStorage.setItem(storageKeys.topP, els.topP.value);
+
+  if (els.rememberKey.checked) {
+    localStorage.setItem(storageKeys.apiKey, els.apiKey.value);
+  } else {
+    localStorage.removeItem(storageKeys.apiKey);
+  }
+}
+
+function restoreBase() {
+  els.apiHost.value = localStorage.getItem(storageKeys.host) || "";
+  els.rememberKey.checked = (localStorage.getItem(storageKeys.rememberKey) || "false") === "true";
+  els.useHeaderKey.checked = (localStorage.getItem(storageKeys.useHeaderKey) || "false") === "true";
+
+  uiMode = (localStorage.getItem(storageKeys.uiMode) || "form");
+  els.requestBodyJson.value = localStorage.getItem(storageKeys.requestBodyJson) || "";
+
+  els.systemPrompt.value = localStorage.getItem(storageKeys.systemPrompt) || "";
+  els.aspectRatio.value = localStorage.getItem(storageKeys.aspectRatio) || "";
+  els.imageSize.value = localStorage.getItem(storageKeys.imageSize) || "";
+  els.temperature.value = localStorage.getItem(storageKeys.temperature) || "";
+  els.topP.value = localStorage.getItem(storageKeys.topP) || "";
+
+  const savedKey = localStorage.getItem(storageKeys.apiKey) || "";
+  if (els.rememberKey.checked && savedKey) {
+    els.apiKey.value = savedKey;
+  }
+}
+
+// ----- mode switching -----
+function setMode(mode) {
+  uiMode = mode;
+  els.modeForm.classList.toggle("active", mode === "form");
+  els.modeJson.classList.toggle("active", mode === "json");
+  els.modeForm.setAttribute("aria-selected", String(mode === "form"));
+  els.modeJson.setAttribute("aria-selected", String(mode === "json"));
+
+  els.formModeWrap.classList.toggle("hidden", mode !== "form");
+  els.jsonModeWrap.classList.toggle("hidden", mode !== "json");
+
+  // On entering JSON mode: sync from form to JSON by default (non-destructive)
+  if (mode === "json") {
+    try {
+      const body = buildBodyFromForm();
+      els.requestBodyJson.value = JSON.stringify(body, null, 2);
+      setStatus("", false);
+    } catch (e) {
+      // If form incomplete, keep existing JSON; show hint
+      setStatus(`切换到 JSON 模式：无法从表单生成默认 JSON（${e?.message || e}）。你可以直接编辑 JSON。`, true);
+    }
+  }
+
+  persistBase();
+}
+
+function formatJsonEditor() {
+  const raw = els.requestBodyJson.value.trim();
+  if (!raw) { setStatus("JSON 为空。", true); return; }
+  try {
+    const obj = JSON.parse(raw);
+    els.requestBodyJson.value = JSON.stringify(obj, null, 2);
+    setStatus("已格式化 JSON。", true);
+    setTimeout(() => setStatus("", false), 1000);
+  } catch (e) {
+    setStatus(`JSON 解析失败：${e?.message || e}`, true);
+  }
+}
+
+function syncJsonFromForm() {
+  try {
+    const body = buildBodyFromForm();
+    els.requestBodyJson.value = JSON.stringify(body, null, 2);
+    setStatus("已从表单同步生成 JSON。", true);
+    setTimeout(() => setStatus("", false), 1000);
+    persistBase();
+  } catch (e) {
+    setStatus(e?.message || String(e), true);
+  }
+}
+
+function applyJsonToFormBestEffort() {
+  const raw = els.requestBodyJson.value.trim();
+  if (!raw) { setStatus("JSON 为空，无法回填。", true); return; }
+
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch (e) {
+    setStatus(`JSON 解析失败：${e?.message || e}`, true);
+    return;
+  }
+
+  // system prompt
+  try {
+    const sp = obj?.systemInstruction?.parts?.[0]?.text;
+    if (typeof sp === "string") els.systemPrompt.value = sp;
+  } catch {}
+
+  // prompt + image from first user parts
+  try {
+    const parts = obj?.contents?.[0]?.parts || [];
+    let text = "";
+    let inline = null;
+
+    for (const p of parts) {
+      if (!text && typeof p?.text === "string") text = p.text;
+      const cand = p?.inline_data || p?.inlineData;
+      if (!inline && cand?.data) inline = cand;
+    }
+    if (text) els.prompt.value = text;
+
+    if (inline?.data) {
+      // replace selectedImage from base64
+      clearSelectedImage();
+      const mimeType = inline.mime_type || inline.mimeType || "application/octet-stream";
+      const base64 = inline.data;
+      const { url, blob } = b64ToBlobUrl(base64, mimeType); // reuse helper to make preview URL
+      // NOTE: b64ToBlobUrl adds to objectUrls; but that's for output cleanup.
+      // For input preview we need a persistent URL not cleaned by output cleanup,
+      // so we create a dedicated one:
+      URL.revokeObjectURL(url);
+      const inputBlob = new Blob([blob], { type: mimeType });
+      const dataUrl = URL.createObjectURL(inputBlob);
+
+      selectedImage = {
+        mimeType,
+        base64,
+        size: inputBlob.size || base64.length,
+        name: "preset_image",
+        dataUrl,
+      };
+      showSelectedImage(selectedImage);
+    }
+  } catch {}
+
+  // generation config
+  try {
+    const gc = obj?.generationConfig || {};
+    if (typeof gc.temperature === "number") els.temperature.value = String(gc.temperature);
+    if (typeof gc.topP === "number") els.topP.value = String(gc.topP);
+    const ic = gc.imageConfig || {};
+    if (typeof ic.aspectRatio === "string") els.aspectRatio.value = ic.aspectRatio;
+    if (typeof ic.imageSize === "string") els.imageSize.value = ic.imageSize;
+  } catch {}
+
+  setStatus("已尽力将 JSON 回填到表单（可能存在字段不完全匹配）。", true);
+  setTimeout(() => setStatus("", false), 1400);
+  persistBase();
+}
+
+// ----- presets -----
+function loadPresets() {
+  try {
+    const raw = localStorage.getItem(storageKeys.presets);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr;
+  } catch {
+    return [];
+  }
+}
+
+function savePresets(arr) {
+  localStorage.setItem(storageKeys.presets, JSON.stringify(arr));
+}
+
+function refreshPresetUI() {
+  const presets = loadPresets();
+  const activeName = localStorage.getItem(storageKeys.activePreset) || "";
+
+  // Rebuild options
+  els.presetSelect.innerHTML = "";
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "（无预设）";
+  els.presetSelect.appendChild(empty);
+
+  for (const p of presets) {
+    const opt = document.createElement("option");
+    opt.value = p.name;
+    opt.textContent = p.name;
+    if (p.name === activeName) opt.selected = true;
+    els.presetSelect.appendChild(opt);
+  }
+
+  const hasActive = !!activeName && presets.some(p => p.name === activeName);
+  els.presetUpdate.disabled = !hasActive;
+  els.presetDelete.disabled = !hasActive;
+}
+
+function getCurrentPresetName() {
+  return els.presetSelect.value || (localStorage.getItem(storageKeys.activePreset) || "");
+}
+
+function makePresetFromCurrentState() {
+  const preset = {
+    name: "",
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    mode: uiMode,
+    fields: {
+      systemPrompt: els.systemPrompt.value,
+      prompt: els.prompt.value,
+      aspectRatio: els.aspectRatio.value,
+      imageSize: els.imageSize.value,
+      temperature: els.temperature.value,
+      topP: els.topP.value,
+    },
+    image: selectedImage ? {
+      mimeType: selectedImage.mimeType,
+      base64: selectedImage.base64,
+      name: selectedImage.name,
+      size: selectedImage.size,
+    } : null,
+    requestBodyJson: els.requestBodyJson.value,
+  };
+  return preset;
+}
+
+function applyPreset(preset) {
+  // DO NOT touch host/key (as required)
+  // Mode
+  setMode(preset.mode === "json" ? "json" : "form");
+
+  // Fields
+  const f = preset.fields || {};
+  els.systemPrompt.value = f.systemPrompt ?? "";
+  els.prompt.value = f.prompt ?? "";
+  els.aspectRatio.value = f.aspectRatio ?? "";
+  els.imageSize.value = f.imageSize ?? "";
+  els.temperature.value = f.temperature ?? "";
+  els.topP.value = f.topP ?? "";
+
+  // JSON body
+  if (typeof preset.requestBodyJson === "string") {
+    els.requestBodyJson.value = preset.requestBodyJson;
+  }
+
+  // Image
+  clearSelectedImage();
+  if (preset.image?.base64) {
+    const mimeType = preset.image.mimeType || "application/octet-stream";
+    const base64 = preset.image.base64;
+    const { blob } = b64ToBlobUrl(base64, mimeType);
+    const inputBlob = new Blob([blob], { type: mimeType });
+    const dataUrl = URL.createObjectURL(inputBlob);
+
+    selectedImage = {
+      mimeType,
+      base64,
+      size: preset.image.size || inputBlob.size,
+      name: preset.image.name || "preset_image",
+      dataUrl,
+    };
+    showSelectedImage(selectedImage);
+  }
+
+  persistBase();
+  setStatus(`已应用预设：${preset.name}\n（Host / Key 未改变）`, true);
+  setTimeout(() => setStatus("", false), 1400);
+}
+
+function saveAsPreset() {
+  const name = (prompt("请输入预设名称（Host / Key 不会保存到预设中）：") || "").trim();
+  if (!name) return;
+
+  const presets = loadPresets();
+  const existing = presets.find(p => p.name === name);
+
+  if (existing) {
+    const ok = confirm(`预设“${name}”已存在，是否覆盖？`);
+    if (!ok) return;
+    const next = makePresetFromCurrentState();
+    next.name = name;
+    next.createdAt = existing.createdAt || nowISO();
+    next.updatedAt = nowISO();
+
+    const idx = presets.findIndex(p => p.name === name);
+    presets[idx] = next;
+  } else {
+    const next = makePresetFromCurrentState();
+    next.name = name;
+    presets.push(next);
+  }
+
+  try {
+    savePresets(presets);
+  } catch (e) {
+    setStatus(`保存失败：可能是本地存储空间不足（预设图片会占用较多空间）。\n${e?.message || e}`, true);
+    return;
+  }
+
+  localStorage.setItem(storageKeys.activePreset, name);
+  refreshPresetUI();
+  setStatus(`已保存预设：${name}`, true);
+  setTimeout(() => setStatus("", false), 1200);
+}
+
+function updateActivePreset() {
+  const name = getCurrentPresetName();
+  if (!name) return;
+
+  const presets = loadPresets();
+  const idx = presets.findIndex(p => p.name === name);
+  if (idx < 0) return;
+
+  const ok = confirm(`确认更新预设“${name}”？`);
+  if (!ok) return;
+
+  const existing = presets[idx];
+  const next = makePresetFromCurrentState();
+  next.name = name;
+  next.createdAt = existing.createdAt || nowISO();
+  next.updatedAt = nowISO();
+  presets[idx] = next;
+
+  try {
+    savePresets(presets);
+  } catch (e) {
+    setStatus(`更新失败：可能是本地存储空间不足。\n${e?.message || e}`, true);
+    return;
+  }
+
+  localStorage.setItem(storageKeys.activePreset, name);
+  refreshPresetUI();
+  setStatus(`已更新预设：${name}`, true);
+  setTimeout(() => setStatus("", false), 1200);
+}
+
+function deleteActivePreset() {
+  const name = getCurrentPresetName();
+  if (!name) return;
+
+  const ok = confirm(`确认删除预设“${name}”？该操作不可撤销。`);
+  if (!ok) return;
+
+  const presets = loadPresets().filter(p => p.name !== name);
+  savePresets(presets);
+
+  localStorage.removeItem(storageKeys.activePreset);
+  refreshPresetUI();
+  setStatus(`已删除预设：${name}`, true);
+  setTimeout(() => setStatus("", false), 1200);
+}
+
+function exportPresets() {
+  const presets = loadPresets();
+  const payload = {
+    version: 1,
+    exportedAt: nowISO(),
+    presets,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `gemini3_presets_${timestampTag()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  setStatus(`已导出预设：${presets.length} 个`, true);
+  setTimeout(() => setStatus("", false), 1200);
+}
+
+async function importPresetsFromFile(file) {
+  if (!file) return;
+  let text = "";
+  try {
+    text = await file.text();
+  } catch (e) {
+    setStatus(`读取导入文件失败：${e?.message || e}`, true);
+    return;
+  }
+
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch (e) {
+    setStatus(`导入失败：JSON 解析错误：${e?.message || e}`, true);
+    return;
+  }
+
+  const incoming = Array.isArray(obj?.presets) ? obj.presets : (Array.isArray(obj) ? obj : []);
+  if (!incoming.length) {
+    setStatus("导入失败：未发现 presets 数组。", true);
+    return;
+  }
+
+  const existing = loadPresets();
+  const nameSet = new Set(existing.map(p => p.name));
+
+  const merged = [...existing];
+  let added = 0;
+
+  for (const p of incoming) {
+    if (!p?.name) continue;
+    let name = String(p.name).trim();
+    if (!name) continue;
+
+    // Resolve conflicts: append suffix
+    if (nameSet.has(name)) {
+      let i = 1;
+      while (nameSet.has(`${name}（导入${i}）`)) i++;
+      name = `${name}（导入${i}）`;
+    }
+
+    const safePreset = {
+      name,
+      createdAt: p.createdAt || nowISO(),
+      updatedAt: nowISO(),
+      mode: (p.mode === "json") ? "json" : "form",
+      fields: {
+        systemPrompt: p?.fields?.systemPrompt ?? "",
+        prompt: p?.fields?.prompt ?? "",
+        aspectRatio: p?.fields?.aspectRatio ?? "",
+        imageSize: p?.fields?.imageSize ?? "",
+        temperature: p?.fields?.temperature ?? "",
+        topP: p?.fields?.topP ?? "",
+      },
+      image: p?.image?.base64 ? {
+        mimeType: p.image.mimeType || "application/octet-stream",
+        base64: p.image.base64,
+        name: p.image.name || "preset_image",
+        size: p.image.size || p.image.base64.length,
+      } : null,
+      requestBodyJson: typeof p.requestBodyJson === "string" ? p.requestBodyJson : "",
+    };
+
+    merged.push(safePreset);
+    nameSet.add(name);
+    added++;
+  }
+
+  if (!added) {
+    setStatus("导入完成：未新增任何有效预设。", true);
+    return;
+  }
+
+  try {
+    savePresets(merged);
+  } catch (e) {
+    setStatus(`导入失败：可能是本地存储空间不足（预设图片会占用较多空间）。\n${e?.message || e}`, true);
+    return;
+  }
+
+  refreshPresetUI();
+  setStatus(`导入完成：新增 ${added} 个预设。`, true);
+  setTimeout(() => setStatus("", false), 1400);
+}
+
+// ----- run -----
+async function doFetchOnce(req) {
+  const t0 = performance.now();
+  const resp = await fetch(req.url, {
+    method: "POST",
+    headers: req.headers,
+    body: JSON.stringify(req.body),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+  const t1 = performance.now();
+
+  return { resp, data, ms: (t1 - t0) };
+}
+
 async function run() {
-  persist();
+  persistBase();
   setStatus("正在请求模型生成……", true);
 
   // Clear prior output
@@ -378,44 +912,102 @@ async function run() {
 
   lastRequest = req;
 
-  const t0 = performance.now();
+  // iOS后台优化：记录可见性 + WakeLock（best-effort）
+  requestInFlight = true;
+  hiddenDuringRequest = false;
+  await requestWakeLock();
+
+  let didAutoRetry = false;
+
   try {
-    const resp = await fetch(req.url, {
-      method: "POST",
-      headers: req.headers,
-      body: JSON.stringify(req.body),
-    });
+    while (true) {
+      try {
+        const { resp, data, ms } = await doFetchOnce(req);
 
-    const data = await resp.json().catch(() => ({}));
-    const t1 = performance.now();
+        if (!resp.ok) {
+          const msg = data?.error?.message || `HTTP ${resp.status} ${resp.statusText}`;
+          setStatus(`请求失败：${msg}\n\n（提示：若你使用自定义 Host，请确认它支持该路径与鉴权方式。）`, true);
+          els.resultEmpty.classList.remove("hidden");
+          return;
+        }
 
-    if (!resp.ok) {
-      const msg = data?.error?.message || `HTTP ${resp.status} ${resp.statusText}`;
-      setStatus(`请求失败：${msg}\n\n（提示：若你使用自定义 Host，请确认它支持该路径与鉴权方式。）`, true);
-      els.resultEmpty.classList.remove("hidden");
-      return;
+        setStatus("", false);
+        renderResult({ data, ms });
+        return;
+      } catch (e) {
+        // 仅在“后台期间发生 + 网络类错误 + 未重试过”的情况下自动重试一次
+        if (!didAutoRetry && hiddenDuringRequest && isLikelyNetworkError(e)) {
+          didAutoRetry = true;
+          setStatus("检测到请求过程中页面进入后台导致网络中断，正在自动重试一次……", true);
+          // 重新申请 wake lock（若可用）
+          if (document.visibilityState === "visible") await requestWakeLock();
+          continue;
+        }
+        throw e;
+      }
     }
-
-    setStatus("", false);
-    renderResult({ data, ms: (t1 - t0) });
   } catch (e) {
-    setStatus(`网络或浏览器拦截导致请求失败：${e.message || e}\n\n（提示：可尝试切换 Host 为你的反代/网关。）`, true);
+    setStatus(
+      `网络或浏览器限制导致请求失败：${e?.message || e}\n\n（提示：若 iOS Safari 经常后台失败，建议尽量保持前台完成一次请求；或使用自定义 Host/反代提升可用性。）`,
+      true
+    );
     els.resultEmpty.classList.remove("hidden");
+  } finally {
+    requestInFlight = false;
+    hiddenDuringRequest = false;
+    releaseWakeLock();
   }
 }
 
+// ----- reset -----
+function resetNonFixedFields() {
+  els.systemPrompt.value = "";
+  els.prompt.value = "";
+  els.aspectRatio.value = "";
+  els.imageSize.value = "";
+  els.temperature.value = "";
+  els.topP.value = "";
+  els.requestBodyJson.value = "";
+  clearSelectedImage();
+
+  setStatus("", false);
+  els.result.classList.add("hidden");
+  els.resultEmpty.classList.remove("hidden");
+  persistBase();
+}
+
+// ----- wiring -----
+async function handleImageFile(file) {
+  if (file.size > 12 * 1024 * 1024) {
+    setStatus(`图片较大（${humanBytes(file.size)}）。建议压缩后再试；保存到预设时也更容易触发存储空间不足。`, true);
+  } else {
+    setStatus("", false);
+  }
+
+  clearSelectedImage();
+  const info = await readImageFile(file);
+  selectedImage = info;
+  showSelectedImage(info);
+
+  persistBase();
+}
+
 function wireEvents() {
-  // Persist on change
+  // Persist on change for fixed fields & general state
   ["input", "change"].forEach((evt) => {
-    els.apiHost.addEventListener(evt, persist);
-    els.apiKey.addEventListener(evt, persist);
-    els.rememberKey.addEventListener(evt, persist);
-    els.useHeaderKey.addEventListener(evt, persist);
-    els.systemPrompt.addEventListener(evt, persist);
-    els.aspectRatio.addEventListener(evt, persist);
-    els.imageSize.addEventListener(evt, persist);
-    els.temperature.addEventListener(evt, persist);
-    els.topP.addEventListener(evt, persist);
+    els.apiHost.addEventListener(evt, persistBase);
+    els.apiKey.addEventListener(evt, persistBase);
+    els.rememberKey.addEventListener(evt, persistBase);
+    els.useHeaderKey.addEventListener(evt, persistBase);
+
+    els.systemPrompt.addEventListener(evt, persistBase);
+    els.prompt.addEventListener(evt, persistBase);
+    els.aspectRatio.addEventListener(evt, persistBase);
+    els.imageSize.addEventListener(evt, persistBase);
+    els.temperature.addEventListener(evt, persistBase);
+    els.topP.addEventListener(evt, persistBase);
+
+    els.requestBodyJson.addEventListener(evt, persistBase);
   });
 
   els.rememberKey.addEventListener("change", () => {
@@ -429,6 +1021,15 @@ function wireEvents() {
   els.apiKey.addEventListener("input", () => {
     if (els.rememberKey.checked) localStorage.setItem(storageKeys.apiKey, els.apiKey.value);
   });
+
+  // mode switch
+  els.modeForm.addEventListener("click", () => setMode("form"));
+  els.modeJson.addEventListener("click", () => setMode("json"));
+
+  // json tools
+  els.jsonFormat.addEventListener("click", formatJsonEditor);
+  els.jsonFromForm.addEventListener("click", syncJsonFromForm);
+  els.jsonToForm.addEventListener("click", applyJsonToFormBestEffort);
 
   // Drag & drop
   const onDrag = (e) => {
@@ -451,20 +1052,15 @@ function wireEvents() {
     await handleImageFile(f);
   });
 
-  els.dropZone.addEventListener("keydown", () => {
-    // Let native file input handle accessibility
-  });
-
   els.imageFile.addEventListener("change", async () => {
     const f = els.imageFile.files?.[0];
     if (!f) return;
     await handleImageFile(f);
   });
 
-  els.clearImage.addEventListener("click", () => {
-    clearSelectedImage();
-  });
+  els.clearImage.addEventListener("click", () => clearSelectedImage());
 
+  // run
   els.form.addEventListener("submit", async (e) => {
     e.preventDefault();
     els.runBtn.disabled = true;
@@ -475,22 +1071,10 @@ function wireEvents() {
     }
   });
 
-  els.resetBtn.addEventListener("click", () => {
-    // Reset non-key fields
-    els.apiHost.value = localStorage.getItem(storageKeys.host) || "";
-    els.systemPrompt.value = "";
-    els.prompt.value = "";
-    els.aspectRatio.value = "";
-    els.imageSize.value = "";
-    els.temperature.value = "";
-    els.topP.value = "";
-    clearSelectedImage();
-    setStatus("", false);
-    els.result.classList.add("hidden");
-    els.resultEmpty.classList.remove("hidden");
-    persist();
-  });
+  // reset
+  els.resetBtn.addEventListener("click", resetNonFixedFields);
 
+  // copy
   els.copyCurl.addEventListener("click", async () => {
     if (!lastRequest) return;
     const curl = makeCurl(lastRequest);
@@ -506,25 +1090,61 @@ function wireEvents() {
     setStatus("已复制请求 JSON 到剪贴板。", true);
     setTimeout(() => setStatus("", false), 1200);
   });
+
+  // presets
+  els.presetSelect.addEventListener("change", () => {
+    const name = els.presetSelect.value || "";
+    if (!name) {
+      localStorage.removeItem(storageKeys.activePreset);
+      refreshPresetUI();
+      return;
+    }
+    localStorage.setItem(storageKeys.activePreset, name);
+    const presets = loadPresets();
+    const p = presets.find(x => x.name === name);
+    if (p) applyPreset(p);
+    refreshPresetUI();
+  });
+
+  els.presetSave.addEventListener("click", saveAsPreset);
+  els.presetUpdate.addEventListener("click", updateActivePreset);
+  els.presetDelete.addEventListener("click", deleteActivePreset);
+  els.presetExport.addEventListener("click", exportPresets);
+
+  els.presetImport.addEventListener("change", async () => {
+    const f = els.presetImport.files?.[0];
+    els.presetImport.value = "";
+    await importPresetsFromFile(f);
+  });
+
+  // iOS background detection
+  document.addEventListener("visibilitychange", async () => {
+    if (requestInFlight && document.visibilityState === "hidden") {
+      hiddenDuringRequest = true;
+    }
+    if (requestInFlight && document.visibilityState === "visible") {
+      // reacquire wake lock best-effort
+      await requestWakeLock();
+    }
+  });
 }
 
-async function handleImageFile(file) {
-  // Soft guard: large files can exceed API limits or be slow on mobile
-  if (file.size > 12 * 1024 * 1024) {
-    setStatus(`图片较大（${humanBytes(file.size)}）。建议压缩到更小尺寸/体积后再试。`, true);
-  } else {
-    setStatus("", false);
-  }
-
-  clearSelectedImage();
-  const info = await readImageFile(file);
-  selectedImage = info;
-  showSelectedImage(info);
-}
-
+// ----- init -----
 function init() {
-  restore();
+  restoreBase();
   wireEvents();
+
+  // ensure mode is applied
+  setMode(uiMode === "json" ? "json" : "form");
+
+  // presets ui
+  refreshPresetUI();
+  const activeName = localStorage.getItem(storageKeys.activePreset) || "";
+  if (activeName) {
+    const presets = loadPresets();
+    const p = presets.find(x => x.name === activeName);
+    if (p) applyPreset(p);
+  }
 }
 
 init();
