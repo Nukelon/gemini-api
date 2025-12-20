@@ -1,349 +1,184 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gemini 3.0 Pro Image Preview 调用器</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      color-scheme: light dark;
-      --accent: #2563eb;
-      --bg: #0b1220;
-      --panel: rgba(255, 255, 255, 0.08);
-      --panel-border: rgba(255, 255, 255, 0.12);
-      --text: #e6e8ec;
-      --muted: #b6c2d4;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: radial-gradient(circle at 20% 20%, rgba(37, 99, 235, 0.15), transparent 25%),
-                  radial-gradient(circle at 80% 0%, rgba(16, 185, 129, 0.08), transparent 25%),
-                  #050a18;
-      color: var(--text);
-      min-height: 100vh;
-      padding: 24px;
-    }
-    .page {
-      max-width: 1100px;
-      margin: 0 auto;
-    }
-    h1 {
-      font-size: 28px;
-      margin: 0 0 16px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-    }
-    p.lead {
-      margin: 0 0 24px;
-      color: var(--muted);
-      line-height: 1.6;
-    }
-    .card {
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--panel-border);
-      border-radius: 18px;
-      padding: 20px;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.25);
-      backdrop-filter: blur(6px);
-    }
-    form {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 14px;
-      margin-bottom: 18px;
-    }
-    label {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      font-size: 14px;
-      color: var(--muted);
-    }
-    input, textarea, select {
-      width: 100%;
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid var(--panel-border);
-      background: rgba(255, 255, 255, 0.05);
-      color: var(--text);
-      font-size: 14px;
-      outline: none;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
-    }
-    input:focus, textarea:focus, select:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
-    }
-    textarea {
-      min-height: 110px;
-      resize: vertical;
-    }
-    .full-row { grid-column: 1 / -1; }
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      margin-top: 6px;
-    }
-    button {
-      border: none;
-      padding: 12px 16px;
-      border-radius: 12px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 15px;
-      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
-    }
-    button.primary {
-      background: linear-gradient(135deg, #2563eb, #7c3aed);
-      color: #fff;
-      box-shadow: 0 10px 30px rgba(37, 99, 235, 0.35);
-    }
-    button.secondary {
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--text);
-      border: 1px solid var(--panel-border);
-    }
-    button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-      transform: none;
-    }
-    button:not(:disabled):hover { transform: translateY(-1px); }
-    .output {
-      margin-top: 20px;
-      display: grid;
-      gap: 12px;
-    }
-    .status {
-      padding: 12px 14px;
-      border-radius: 12px;
-      border: 1px solid var(--panel-border);
-      background: rgba(255, 255, 255, 0.03);
-      color: var(--muted);
-      font-size: 14px;
-    }
-    .image-preview {
-      position: relative;
-      overflow: hidden;
-      border-radius: 18px;
-      border: 1px solid var(--panel-border);
-      background: #0f172a;
-      min-height: 120px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .image-preview img {
-      max-width: 100%;
-      height: auto;
-      display: block;
-    }
-    .download {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      text-decoration: none;
-      color: #fff;
-      background: linear-gradient(135deg, #10b981, #22d3ee);
-      padding: 10px 14px;
-      border-radius: 12px;
-      font-weight: 600;
-      box-shadow: 0 10px 30px rgba(16, 185, 129, 0.25);
-      width: fit-content;
-    }
-    .tip { color: var(--muted); font-size: 13px; }
-    .inline { display: flex; gap: 10px; align-items: center; }
-  </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Gemini 3 Pro Image Preview API 调用器</title>
+  <meta name="description" content="基于 GitHub Pages 的 gemini-3-pro-image-preview（Nano Banana Pro）图像生成/编辑 API 调用器" />
+  <link rel="stylesheet" href="./style.css" />
 </head>
+
 <body>
-  <div class="page">
-    <h1>Gemini 3.0 Pro Image Preview API 调用器</h1>
-    <p class="lead">基于 GitHub Pages 的纯前端调用器，适配 iOS Safari、Android 浏览器等多端。支持自定义主机、API Key、提示词、温度、topP、输出比例与分辨率等参数，并将生成的图片展示与下载。</p>
-    <div class="card">
-      <form id="invoke-form">
-        <label>
-          API 主机地址（可选，空则使用 https://generativelanguage.googleapis.com）
-          <input type="url" id="apiHost" placeholder="https://your-proxy.example.com" />
+  <header class="header">
+    <div class="container">
+      <div class="title-row">
+        <h1 class="title">Gemini 3 Pro Image Preview API 调用器</h1>
+        <span class="badge">GitHub Pages / iOS / Android</span>
+      </div>
+      <p class="subtitle">
+        支持：Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP
+      </p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2 class="section-title">配置</h2>
+
+      <form id="form" class="grid" autocomplete="off">
+        <label class="field">
+          <span class="label">API 主机地址（可选）</span>
+          <input id="apiHost" type="text" inputmode="url" placeholder="留空则使用 Google 官方主机" />
+          <span class="hint">示例：填入你的反代/网关域名；留空默认官方。</span>
         </label>
-        <label>
-          API Key（必填）
-          <input type="password" id="apiKey" placeholder="输入 API Key" required />
+
+        <label class="field">
+          <span class="label">API Key</span>
+          <input id="apiKey" type="password" placeholder="粘贴你的 Gemini API Key" />
+          <div class="row">
+            <label class="checkbox">
+              <input id="rememberKey" type="checkbox" />
+              <span>在本机保存 Key（localStorage）</span>
+            </label>
+            <label class="checkbox">
+              <input id="useHeaderKey" type="checkbox" />
+              <span>把 Key 放到 Header（x-goog-api-key）</span>
+            </label>
+          </div>
+          <span class="hint">如不勾选“保存”，刷新页面后不会保留 Key。</span>
         </label>
-        <label class="full-row">
-          系统提示词（可选）
-          <textarea id="systemPrompt" placeholder="用于设定助手行为的系统提示词"></textarea>
+
+        <label class="field full">
+          <span class="label">系统提示词（可选）</span>
+          <textarea id="systemPrompt" rows="3" placeholder="例如：你是一个专业平面设计师，输出图片需要干净背景、柔光、高清。"></textarea>
         </label>
-        <label class="full-row">
-          用户提示词
-          <textarea id="userPrompt" placeholder="描述你想要生成的画面" required></textarea>
+
+        <label class="field full">
+          <span class="label">提示词（必填）</span>
+          <textarea id="prompt" rows="5" placeholder="例如：生成一张极简风的咖啡品牌海报，包含清晰可读的标题文字“MOONBEAN”，风格高级。"></textarea>
         </label>
-        <label>
-          输入图片（可选，支持拖入截图）
-          <input type="file" id="imageInput" accept="image/*" />
+
+        <div class="field full">
+          <span class="label">输入图片（可选，用于图像编辑/参考）</span>
+          <div id="dropZone" class="dropzone" role="button" tabindex="0">
+            <div class="dz-main">
+              <strong>拖拽图片到这里</strong>
+              <span>或点击选择文件（PNG/JPEG/WebP/HEIC 等）</span>
+            </div>
+            <input id="imageFile" type="file" accept="image/*" />
+          </div>
+          <div id="imagePreview" class="preview hidden">
+            <img id="imagePreviewImg" alt="输入图片预览" />
+            <div class="preview-meta">
+              <div id="imageMeta"></div>
+              <button id="clearImage" type="button" class="btn secondary">移除图片</button>
+            </div>
+          </div>
+          <span class="hint">如果你上传了图片，提示词可写“把这张图改成…… / 在保持主体不变的情况下……”</span>
+        </div>
+
+        <label class="field">
+          <span class="label">生成图片比例（可选）</span>
+          <select id="aspectRatio">
+            <option value="">默认（模型自行选择）</option>
+            <option value="1:1">1:1</option>
+            <option value="2:3">2:3</option>
+            <option value="3:2">3:2</option>
+            <option value="3:4">3:4</option>
+            <option value="4:3">4:3</option>
+            <option value="4:5">4:5</option>
+            <option value="5:4">5:4</option>
+            <option value="9:16">9:16</option>
+            <option value="16:9">16:9</option>
+            <option value="21:9">21:9</option>
+          </select>
         </label>
-        <label>
-          生成的图片比例（可选，例如 1:1 或 16:9）
-          <input type="text" id="aspectRatio" placeholder="1:1" />
+
+        <label class="field">
+          <span class="label">分辨率（可选）</span>
+          <select id="imageSize">
+            <option value="">默认（1K）</option>
+            <option value="1K">1K</option>
+            <option value="2K">2K</option>
+            <option value="4K">4K</option>
+          </select>
+          <span class="hint">4K 成本更高、延迟更大。</span>
         </label>
-        <label>
-          分辨率（可选，例如 1024x1024）
-          <input type="text" id="resolution" placeholder="1024x1024" />
+
+        <label class="field">
+          <span class="label">Temperature（可选，0–2）</span>
+          <input id="temperature" type="number" inputmode="decimal" min="0" max="2" step="0.1" placeholder="留空使用模型默认" />
         </label>
-        <label>
-          温度（可选，0-2）
-          <input type="number" step="0.1" min="0" max="2" id="temperature" placeholder="默认由服务端决定" />
+
+        <label class="field">
+          <span class="label">TopP（可选，0–1）</span>
+          <input id="topP" type="number" inputmode="decimal" min="0" max="1" step="0.05" placeholder="留空使用模型默认" />
         </label>
-        <label>
-          topP（可选，0-1）
-          <input type="number" step="0.05" min="0" max="1" id="topP" placeholder="默认由服务端决定" />
-        </label>
-        <div class="actions full-row">
-          <button type="submit" class="primary" id="submit">生成图片</button>
-          <button type="button" class="secondary" id="clear">清空</button>
-          <span class="tip">调用格式基于 Google 官方 <code>models/gemini-3.0-pro-image-preview-001:generateContent</code> REST 接口。</span>
+
+        <div class="actions full">
+          <button id="runBtn" class="btn primary" type="submit">调用 API 生成</button>
+          <button id="resetBtn" class="btn secondary" type="button">重置（不清 Key，除非你取消保存）</button>
+        </div>
+
+        <div class="full">
+          <div id="status" class="status hidden"></div>
         </div>
       </form>
-      <div class="output">
-        <div class="status" id="status">等待输入…</div>
-        <div class="image-preview" id="imagePreview">生成结果将在此显示</div>
-        <a id="download" class="download" style="display:none" download="gemini-image.png">下载图片</a>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">结果</h2>
+
+      <div id="resultEmpty" class="empty">
+        尚未生成。提交后会在这里显示图片与返回文本。
       </div>
-    </div>
-  </div>
 
-  <script>
-    const form = document.getElementById('invoke-form');
-    const statusEl = document.getElementById('status');
-    const preview = document.getElementById('imagePreview');
-    const downloadLink = document.getElementById('download');
-    const clearBtn = document.getElementById('clear');
+      <div id="result" class="hidden">
+        <div class="result-head">
+          <div>
+            <div class="kpi">
+              <span class="kpi-label">模型</span>
+              <span class="kpi-value" id="modelName"></span>
+            </div>
+            <div class="kpi">
+              <span class="kpi-label">耗时</span>
+              <span class="kpi-value" id="latency"></span>
+            </div>
+          </div>
 
-    const defaultHost = 'https://generativelanguage.googleapis.com';
-    const model = 'models/gemini-3.0-pro-image-preview-001:generateContent';
+          <div class="result-actions">
+            <button id="copyCurl" type="button" class="btn secondary">复制 cURL</button>
+            <button id="copyJson" type="button" class="btn secondary">复制请求 JSON</button>
+          </div>
+        </div>
 
-    async function fileToBase64(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    }
+        <div id="textOutWrap" class="block hidden">
+          <h3 class="block-title">文本输出</h3>
+          <pre id="textOut" class="pre"></pre>
+        </div>
 
-    function setBusy(isBusy, message) {
-      const submit = document.getElementById('submit');
-      submit.disabled = isBusy;
-      statusEl.textContent = message;
-    }
+        <div id="imagesOutWrap" class="block hidden">
+          <h3 class="block-title">图片输出</h3>
+          <div id="imagesOut" class="gallery"></div>
+          <p class="hint">
+            iOS Safari 如遇“下载”不生效，请点击“打开原图”后长按图片保存到相册。
+          </p>
+        </div>
 
-    function resetOutput() {
-      preview.innerHTML = '生成结果将在此显示';
-      downloadLink.style.display = 'none';
-      downloadLink.href = '';
-    }
+        <details class="details">
+          <summary>查看原始响应 JSON</summary>
+          <pre id="rawJson" class="pre"></pre>
+        </details>
+      </div>
+    </section>
 
-    clearBtn.addEventListener('click', () => {
-      form.reset();
-      resetOutput();
-      statusEl.textContent = '已重置，等待输入…';
-    });
+    <footer class="footer">
+      <p class="footnote">
+        说明：本页面仅做前端调用封装。请妥善保护 API Key，并建议对 Key 做来源域名限制。
+      </p>
+    </footer>
+  </main>
 
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      resetOutput();
-
-      const apiKey = document.getElementById('apiKey').value.trim();
-      if (!apiKey) {
-        statusEl.textContent = '请填写 API Key';
-        return;
-      }
-
-      const apiHost = (document.getElementById('apiHost').value.trim() || defaultHost).replace(/\/$/, '');
-      const systemPrompt = document.getElementById('systemPrompt').value.trim();
-      const userPrompt = document.getElementById('userPrompt').value.trim();
-      const aspectRatio = document.getElementById('aspectRatio').value.trim();
-      const resolution = document.getElementById('resolution').value.trim();
-      const temperatureRaw = document.getElementById('temperature').value.trim();
-      const topPRaw = document.getElementById('topP').value.trim();
-      const file = document.getElementById('imageInput').files[0];
-
-      if (!userPrompt) {
-        statusEl.textContent = '请填写提示词';
-        return;
-      }
-
-      setBusy(true, '正在请求 Gemini 生成图片…');
-
-      try {
-        const parts = [{ text: userPrompt }];
-        if (file) {
-          const base64 = await fileToBase64(file);
-          parts.unshift({
-            inlineData: {
-              mimeType: file.type || 'image/png',
-              data: base64
-            }
-          });
-        }
-
-        const body = {
-          contents: [{ role: 'user', parts }]
-        };
-
-        if (systemPrompt) {
-          body.systemInstruction = { parts: [{ text: systemPrompt }] };
-        }
-
-        const generationConfig = { responseMimeType: 'image/png' };
-        if (temperatureRaw) generationConfig.temperature = parseFloat(temperatureRaw);
-        if (topPRaw) generationConfig.topP = parseFloat(topPRaw);
-        if (aspectRatio || resolution) {
-          body.outputImageConfig = {};
-          if (aspectRatio) body.outputImageConfig.aspectRatio = aspectRatio;
-          if (resolution) body.outputImageConfig.resolution = resolution;
-        }
-        body.generationConfig = generationConfig;
-
-        const endpoint = `${apiHost.replace(/\/$/, '')}/v1beta/${model}?key=${encodeURIComponent(apiKey)}`;
-
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-
-        if (!response.ok) {
-          const errText = await response.text();
-          throw new Error(`请求失败: ${response.status} ${response.statusText} - ${errText}`);
-        }
-
-        const result = await response.json();
-        const inlineData = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-        const imageBase64 = inlineData?.inlineData?.data;
-        const mime = inlineData?.inlineData?.mimeType || 'image/png';
-
-        if (!imageBase64) {
-          throw new Error('响应中未找到图片数据。');
-        }
-
-        const dataUrl = `data:${mime};base64,${imageBase64}`;
-        preview.innerHTML = `<img src="${dataUrl}" alt="Gemini result" />`;
-        downloadLink.href = dataUrl;
-        downloadLink.style.display = 'inline-flex';
-        setBusy(false, '生成完成！');
-      } catch (error) {
-        console.error(error);
-        statusEl.textContent = error.message || '请求失败，请检查网络与参数。';
-        setBusy(false, '请求失败');
-      }
-    });
-  </script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
