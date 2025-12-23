@@ -2,6 +2,7 @@ const MODEL_ID = "gemini-3-pro-image-preview";
 const DEFAULT_HOST = "https://generativelanguage.googleapis.com";
 const API_PATH = `/v1beta/models/${MODEL_ID}:generateContent`;
 
+// ----- utils -----
 const $ = (id) => document.getElementById(id);
 
 function stripTrailingSlash(s) { return s.replace(/\/+$/, ""); }
@@ -34,6 +35,7 @@ function base64FromArrayBuffer(buf) {
 function nowISO() { return new Date().toISOString(); }
 
 function isLikelyNetworkError(err) {
+  // Safari/Chromium: fetch network errors often surface as TypeError
   const name = String(err?.name || "");
   const msg = String(err?.message || "");
   if (name === "TypeError") return true;
@@ -42,43 +44,23 @@ function isLikelyNetworkError(err) {
   return false;
 }
 
-function parseRatioString(s) {
-  const t = String(s || "").trim();
-  const m = /^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/.exec(t);
-  if (!m) return null;
-  const a = Number(m[1]), b = Number(m[2]);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return null;
-  return a / b;
-}
-
-function bestSupportedAspectRatio(targetRatio) {
-  // Must match the select options in UI
-  const options = ["1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"];
-  let best = options[0];
-  let bestDiff = Infinity;
-
-  for (const s of options) {
-    const r = parseRatioString(s);
-    if (!r) continue;
-    const diff = Math.abs(r - targetRatio);
-    if (diff < bestDiff) { bestDiff = diff; best = s; }
-  }
-  return best;
-}
-
+// ----- DOM -----
 const els = {
   form: $("form"),
 
+  // fixed
   apiHost: $("apiHost"),
   apiKey: $("apiKey"),
   rememberKey: $("rememberKey"),
   useHeaderKey: $("useHeaderKey"),
 
+  // mode switch
   modeForm: $("modeForm"),
   modeJson: $("modeJson"),
   formModeWrap: $("formModeWrap"),
   jsonModeWrap: $("jsonModeWrap"),
 
+  // form fields
   systemPrompt: $("systemPrompt"),
   prompt: $("prompt"),
   imageFile: $("imageFile"),
@@ -92,13 +74,13 @@ const els = {
   temperature: $("temperature"),
   topP: $("topP"),
 
-  keepOriginalAspect: $("keepOriginalAspect"),
-
+  // json editor
   requestBodyJson: $("requestBodyJson"),
   jsonFormat: $("jsonFormat"),
   jsonFromForm: $("jsonFromForm"),
   jsonToForm: $("jsonToForm"),
 
+  // presets
   presetSelect: $("presetSelect"),
   presetSave: $("presetSave"),
   presetUpdate: $("presetUpdate"),
@@ -106,10 +88,12 @@ const els = {
   presetExport: $("presetExport"),
   presetImport: $("presetImport"),
 
+  // actions
   runBtn: $("runBtn"),
   resetBtn: $("resetBtn"),
   status: $("status"),
 
+  // result
   resultEmpty: $("resultEmpty"),
   result: $("result"),
   modelName: $("modelName"),
@@ -123,73 +107,86 @@ const els = {
   rawJson: $("rawJson"),
 };
 
+// ----- storage keys -----
 const storageKeys = {
   host: "g3_host",
   rememberKey: "g3_remember_key",
   apiKey: "g3_api_key",
   useHeaderKey: "g3_use_header_key",
 
+  // last UI state
   uiMode: "g3_ui_mode",
   requestBodyJson: "g3_request_body_json",
 
+  // form values
   systemPrompt: "g3_system_prompt",
   aspectRatio: "g3_aspect_ratio",
   imageSize: "g3_image_size",
   temperature: "g3_temperature",
   topP: "g3_topP",
 
-  keepOriginalAspect: "g3_keep_original_aspect",
-
+  // presets storage
   presets: "g3_presets_v1",
   activePreset: "g3_active_preset_name",
 };
 
+// ----- state -----
 let uiMode = "form"; // "form" | "json"
+let selectedImage = null; // { mimeType, base64, size, name, dataUrl }
+let lastRequest = null;   // { url, headers, body }
+let objectUrls = [];      // blob URLs for output images
 
-// selectedImage includes original dimensions/ratio (critical for keep-original-aspect)
-let selectedImage = null; // { mimeType, base64, size, name, dataUrl, width, height, ratio }
-
-let lastRequest = null;
-let objectUrls = [];      // output blob URLs (cleanup)
-let inputObjectUrl = null; // input preview URL (separate lifecycle)
-
+// iOS background mitigation
 let requestInFlight = false;
 let hiddenDuringRequest = false;
 let wakeLock = null;
 
-// cropping config for the last run
-let lastCropConfig = { enabled: false, ratio: null }; // ratio = input width/height
-
+// ----- status -----
 function setStatus(msg, visible = true) {
   els.status.textContent = msg || "";
   els.status.classList.toggle("hidden", !visible);
 }
 
-// ----- object URL mgmt -----
-function cleanupOutputObjectUrls() {
-  for (const u of objectUrls) URL.revokeObjectURL(u);
-  objectUrls = [];
+// ----- image helpers -----
+async function readImageFile(file) {
+  const mimeType = file.type || "application/octet-stream";
+  const size = file.size;
+  const name = file.name || "image";
+  const arrayBuf = await file.arrayBuffer();
+  const base64 = base64FromArrayBuffer(arrayBuf);
+  const dataUrl = URL.createObjectURL(file); // preview only
+  return { mimeType, size, name, base64, dataUrl };
 }
 
-function revokeInputObjectUrl() {
-  if (inputObjectUrl) {
-    URL.revokeObjectURL(inputObjectUrl);
-    inputObjectUrl = null;
-  }
+function clearSelectedImage() {
+  if (selectedImage?.dataUrl) URL.revokeObjectURL(selectedImage.dataUrl);
+  selectedImage = null;
+  els.imagePreview.classList.add("hidden");
+  els.imagePreviewImg.src = "";
+  els.imageMeta.textContent = "";
+  if (els.imageFile) els.imageFile.value = "";
 }
 
-function b64ToBlob(b64, mimeType) {
+function showSelectedImage(info) {
+  els.imagePreviewImg.src = info.dataUrl;
+  els.imageMeta.textContent = `${info.name} · ${humanBytes(info.size)} · ${info.mimeType}`;
+  els.imagePreview.classList.remove("hidden");
+}
+
+function b64ToBlobUrl(b64, mimeType) {
   const binary = atob(b64);
   const len = binary.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mimeType || "application/octet-stream" });
-}
-
-function blobToObjectUrlTracked(blob) {
+  const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   objectUrls.push(url);
-  return url;
+  return { url, blob };
+}
+
+function cleanupObjectUrls() {
+  for (const u of objectUrls) URL.revokeObjectURL(u);
+  objectUrls = [];
 }
 
 // ----- wake lock (best-effort) -----
@@ -209,148 +206,17 @@ function releaseWakeLock() {
   wakeLock = null;
 }
 
-// ----- keep-original-aspect UI enforcement -----
-function enforceKeepOriginalAvailability() {
-  const hasImage = !!selectedImage;
-
-  els.keepOriginalAspect.disabled = !hasImage;
-  if (!hasImage && els.keepOriginalAspect.checked) {
-    els.keepOriginalAspect.checked = false;
-  }
-
-  // When enabled, JSON mode must be disabled and aspectRatio must be locked
-  const keepOn = hasImage && els.keepOriginalAspect.checked;
-
-  els.aspectRatio.disabled = keepOn;
-
-  els.modeJson.disabled = keepOn;
-  els.modeJson.title = keepOn ? "已开启“保持原图比例”，JSON 模式不可用。" : "";
-
-  if (keepOn) {
-    if (uiMode === "json") {
-      setStatus("已开启“保持原图比例”，已自动切回表单模式并禁用 JSON 模式。", true);
-      setTimeout(() => setStatus("", false), 1400);
-      setMode("form", { silent: true });
-    }
-  }
-
-  persistBase();
-}
-
-// ----- image handling -----
-async function readImageFileWithMeta(file) {
-  const mimeType = file.type || "application/octet-stream";
-  const size = file.size;
-  const name = file.name || "image";
-  const arrayBuf = await file.arrayBuffer();
-  const base64 = base64FromArrayBuffer(arrayBuf);
-
-  revokeInputObjectUrl();
-  inputObjectUrl = URL.createObjectURL(file);
-
-  // Load dimensions
-  const img = new Image();
-  img.src = inputObjectUrl;
-  try {
-    await img.decode();
-  } catch {
-    // Some Safari versions may not support decode reliably; fallback to load event
-    await new Promise((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("无法解析图片尺寸"));
-    });
-  }
-
-  const width = img.naturalWidth || img.width;
-  const height = img.naturalHeight || img.height;
-  const ratio = width && height ? (width / height) : null;
-
-  return { mimeType, size, name, base64, dataUrl: inputObjectUrl, width, height, ratio };
-}
-
-function clearSelectedImage() {
-  selectedImage = null;
-  els.imagePreview.classList.add("hidden");
-  els.imagePreviewImg.src = "";
-  els.imageMeta.textContent = "";
-  if (els.imageFile) els.imageFile.value = "";
-  revokeInputObjectUrl();
-  enforceKeepOriginalAvailability();
-}
-
-function showSelectedImage(info) {
-  els.imagePreviewImg.src = info.dataUrl;
-  const dim = (info.width && info.height) ? ` · ${info.width}×${info.height}` : "";
-  els.imageMeta.textContent = `${info.name} · ${humanBytes(info.size)} · ${info.mimeType}${dim}`;
-  els.imagePreview.classList.remove("hidden");
-}
-
-// ----- mode switching -----
-function setMode(mode, { silent = false } = {}) {
-  uiMode = mode;
-
-  els.modeForm.classList.toggle("active", mode === "form");
-  els.modeJson.classList.toggle("active", mode === "json");
-
-  els.modeForm.setAttribute("aria-selected", String(mode === "form"));
-  els.modeJson.setAttribute("aria-selected", String(mode === "json"));
-
-  els.formModeWrap.classList.toggle("hidden", mode !== "form");
-  els.jsonModeWrap.classList.toggle("hidden", mode !== "json");
-
-  // On entering JSON mode: sync from form by default
-  if (mode === "json") {
-    try {
-      const body = buildBodyFromForm({ forJsonSync: true });
-      els.requestBodyJson.value = JSON.stringify(body, null, 2);
-      if (!silent) setStatus("", false);
-    } catch (e) {
-      if (!silent) setStatus(`切换到 JSON 模式：无法从表单生成默认 JSON（${e?.message || e}）。你可以直接编辑 JSON。`, true);
-    }
-  }
-
-  persistBase();
-}
-
-// ----- request body -----
-function buildHiddenKeepAspectSystemPrefix(inputRatio, chosenAspectRatioStr) {
-  // Must be invisible in UI: only prepended to systemInstruction sent to API.
-  // Keep it explicit to maximize instruction adherence.
-  const ratioText = (inputRatio && Number.isFinite(inputRatio)) ? inputRatio.toFixed(6) : "unknown";
-  return [
-    "【隐藏系统指令（无需在输出中提及）】",
-    "你将生成“最终可裁切成与输入图片相同宽高比”的图像。",
-    `输入图片宽高比约为：${ratioText}（宽/高）。`,
-    `生成时请优先选择尽可能接近该比例的画幅（若你必须在固定比例中选择，则选择最接近者：${chosenAspectRatioStr}）。`,
-    "如果无法生成与输入比例一致的画幅：",
-    "1) 仅允许在输入画幅以外的区域使用“纯黑(#000000)填充”，不得在画幅外生成任何额外内容；",
-    "2) 输入画幅内的主体内容应完整、居中且不被裁切；",
-    "3) 不得在画幅外出现任何文字、图案或背景内容（只能是纯黑）。",
-    "你的目标是：在后续网页居中裁切回输入比例时，裁切后画面不损失主体内容，且画幅外仅为纯黑填充。",
-  ].join("\n");
-}
-
-function buildBodyFromForm({ forJsonSync = false } = {}) {
-  const systemPromptUI = els.systemPrompt.value.trim();
+// ----- build body (form mode) -----
+function buildBodyFromForm() {
+  const systemPrompt = els.systemPrompt.value.trim();
   const prompt = els.prompt.value.trim();
+  const aspectRatio = els.aspectRatio.value;
   const imageSize = els.imageSize.value;
 
   const temperature = safeNumberOrEmpty(els.temperature.value);
   const topP = safeNumberOrEmpty(els.topP.value);
 
-  const keepOn = !!selectedImage && els.keepOriginalAspect.checked;
-
   if (!prompt) throw new Error("请填写提示词（必填）。");
-  if (keepOn && !selectedImage?.ratio) throw new Error("无法获取原图宽高比，请更换图片重试。");
-
-  // Determine aspect ratio
-  let aspectRatio = els.aspectRatio.value;
-  let chosen = "";
-
-  if (keepOn) {
-    chosen = bestSupportedAspectRatio(selectedImage.ratio);
-    aspectRatio = chosen; // lock to closest supported ratio for generation
-  }
 
   const parts = [{ text: prompt }];
   if (selectedImage) {
@@ -372,15 +238,10 @@ function buildBodyFromForm({ forJsonSync = false } = {}) {
     },
   };
 
-  // systemInstruction: prepend hidden prefix when keepOn
-  let systemToSend = systemPromptUI;
-  if (keepOn) {
-    const hiddenPrefix = buildHiddenKeepAspectSystemPrefix(selectedImage.ratio, chosen);
-    systemToSend = hiddenPrefix + (systemPromptUI ? `\n\n${systemPromptUI}` : "");
-  }
-
-  if (systemToSend) {
-    body.systemInstruction = { parts: [{ text: systemToSend }] };
+  if (systemPrompt) {
+    body.systemInstruction = {
+      parts: [{ text: systemPrompt }],
+    };
   }
 
   if (temperature !== "") body.generationConfig.temperature = temperature;
@@ -392,15 +253,10 @@ function buildBodyFromForm({ forJsonSync = false } = {}) {
     if (imageSize) body.generationConfig.imageConfig.imageSize = imageSize;
   }
 
-  // In JSON sync mode, we do not want to change UI state; just generate JSON
-  if (forJsonSync) return body;
-
-  // Save crop config for this run
-  lastCropConfig = keepOn ? { enabled: true, ratio: selectedImage.ratio } : { enabled: false, ratio: null };
-
   return body;
 }
 
+// ----- build request (host/key fixed; body depends on mode) -----
 function buildRequest() {
   const host = stripTrailingSlash(els.apiHost.value.trim() || DEFAULT_HOST);
   const apiKey = els.apiKey.value.trim();
@@ -421,8 +277,6 @@ function buildRequest() {
     } catch (e) {
       throw new Error(`JSON 解析失败：${e?.message || e}`);
     }
-    // JSON 模式禁止 keepOriginalAspect，因此此处不设置 lastCropConfig
-    lastCropConfig = { enabled: false, ratio: null };
   } else {
     body = buildBodyFromForm();
   }
@@ -446,184 +300,6 @@ function makeCurl({ url, headers, body }) {
   ].join("\n");
 }
 
-// ----- JSON editor tools -----
-function formatJsonEditor() {
-  const raw = els.requestBodyJson.value.trim();
-  if (!raw) { setStatus("JSON 为空。", true); return; }
-  try {
-    const obj = JSON.parse(raw);
-    els.requestBodyJson.value = JSON.stringify(obj, null, 2);
-    setStatus("已格式化 JSON。", true);
-    setTimeout(() => setStatus("", false), 1000);
-  } catch (e) {
-    setStatus(`JSON 解析失败：${e?.message || e}`, true);
-  }
-}
-
-function syncJsonFromForm() {
-  if (els.keepOriginalAspect.checked && selectedImage) {
-    setStatus("已开启“保持原图比例”，JSON 同步功能不可用。", true);
-    return;
-  }
-  try {
-    const body = buildBodyFromForm({ forJsonSync: true });
-    els.requestBodyJson.value = JSON.stringify(body, null, 2);
-    setStatus("已从表单同步生成 JSON。", true);
-    setTimeout(() => setStatus("", false), 1000);
-    persistBase();
-  } catch (e) {
-    setStatus(e?.message || String(e), true);
-  }
-}
-
-function applyJsonToFormBestEffort() {
-  if (els.keepOriginalAspect.checked && selectedImage) {
-    setStatus("已开启“保持原图比例”，JSON 回填功能不可用。", true);
-    return;
-  }
-
-  const raw = els.requestBodyJson.value.trim();
-  if (!raw) { setStatus("JSON 为空，无法回填。", true); return; }
-
-  let obj;
-  try { obj = JSON.parse(raw); }
-  catch (e) { setStatus(`JSON 解析失败：${e?.message || e}`, true); return; }
-
-  try {
-    const sp = obj?.systemInstruction?.parts?.[0]?.text;
-    if (typeof sp === "string") els.systemPrompt.value = sp;
-  } catch {}
-
-  try {
-    const parts = obj?.contents?.[0]?.parts || [];
-    let text = "";
-    let inline = null;
-
-    for (const p of parts) {
-      if (!text && typeof p?.text === "string") text = p.text;
-      const cand = p?.inline_data || p?.inlineData;
-      if (!inline && cand?.data) inline = cand;
-    }
-    if (text) els.prompt.value = text;
-
-    if (inline?.data) {
-      // Replace selectedImage from base64 (best effort)
-      clearSelectedImage();
-      const mimeType = inline.mime_type || inline.mimeType || "application/octet-stream";
-      const base64 = inline.data;
-
-      const blob = b64ToBlob(base64, mimeType);
-      revokeInputObjectUrl();
-      inputObjectUrl = URL.createObjectURL(blob);
-
-      const img = new Image();
-      img.src = inputObjectUrl;
-      try { await img.decode(); } catch {}
-
-      selectedImage = {
-        mimeType,
-        base64,
-        size: blob.size || base64.length,
-        name: "json_image",
-        dataUrl: inputObjectUrl,
-        width: img.naturalWidth || img.width,
-        height: img.naturalHeight || img.height,
-        ratio: (img.naturalWidth && img.naturalHeight) ? img.naturalWidth / img.naturalHeight : null,
-      };
-      showSelectedImage(selectedImage);
-    }
-  } catch {}
-
-  try {
-    const gc = obj?.generationConfig || {};
-    if (typeof gc.temperature === "number") els.temperature.value = String(gc.temperature);
-    if (typeof gc.topP === "number") els.topP.value = String(gc.topP);
-    const ic = gc.imageConfig || {};
-    if (typeof ic.aspectRatio === "string") els.aspectRatio.value = ic.aspectRatio;
-    if (typeof ic.imageSize === "string") els.imageSize.value = ic.imageSize;
-  } catch {}
-
-  setStatus("已尽力将 JSON 回填到表单（可能存在字段不完全匹配）。", true);
-  setTimeout(() => setStatus("", false), 1400);
-  persistBase();
-}
-
-// ----- cropping -----
-async function decodeImageFromBlob(blob) {
-  // Prefer createImageBitmap; fallback to Image
-  if ("createImageBitmap" in window) {
-    try {
-      const bmp = await createImageBitmap(blob);
-      return { type: "bitmap", bmp, width: bmp.width, height: bmp.height };
-    } catch {
-      // fallback
-    }
-  }
-
-  const url = URL.createObjectURL(blob);
-  try {
-    const img = new Image();
-    img.src = url;
-    try { await img.decode(); }
-    catch {
-      await new Promise((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error("无法解码输出图片"));
-      });
-    }
-    const w = img.naturalWidth || img.width;
-    const h = img.naturalHeight || img.height;
-    return { type: "img", img, width: w, height: h };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-async function cropBlobToAspect(blob, mimeType, targetRatio) {
-  const decoded = await decodeImageFromBlob(blob);
-  const W = decoded.width;
-  const H = decoded.height;
-  if (!W || !H || !targetRatio) return blob;
-
-  // Compute center crop rectangle to match targetRatio
-  let sx = 0, sy = 0, sw = W, sh = H;
-  const currentRatio = W / H;
-
-  if (currentRatio > targetRatio) {
-    // too wide -> crop width
-    sw = Math.round(H * targetRatio);
-    sx = Math.round((W - sw) / 2);
-  } else if (currentRatio < targetRatio) {
-    // too tall -> crop height
-    sh = Math.round(W / targetRatio);
-    sy = Math.round((H - sh) / 2);
-  } else {
-    return blob; // already matching
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = sw;
-  canvas.height = sh;
-  const ctx = canvas.getContext("2d", { alpha: true });
-
-  if (!ctx) return blob;
-
-  if (decoded.type === "bitmap") {
-    ctx.drawImage(decoded.bmp, sx, sy, sw, sh, 0, 0, sw, sh);
-    decoded.bmp.close?.();
-  } else {
-    ctx.drawImage(decoded.img, sx, sy, sw, sh, 0, 0, sw, sh);
-  }
-
-  const outType = (mimeType && mimeType.startsWith("image/")) ? mimeType : "image/png";
-
-  const outBlob = await new Promise((resolve) => {
-    canvas.toBlob((b) => resolve(b || blob), outType, outType === "image/jpeg" ? 0.95 : undefined);
-  });
-
-  return outBlob;
-}
-
 // ----- render -----
 function timestampTag() {
   const d = new Date();
@@ -631,7 +307,7 @@ function timestampTag() {
   return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-async function renderResult({ data, ms }) {
+function renderResult({ data, ms }) {
   els.resultEmpty.classList.add("hidden");
   els.result.classList.remove("hidden");
 
@@ -666,136 +342,72 @@ async function renderResult({ data, ms }) {
   }
 
   els.imagesOut.innerHTML = "";
-  cleanupOutputObjectUrls();
+  cleanupObjectUrls();
 
-  if (!images.length) {
+  if (images.length) {
+    els.imagesOutWrap.classList.remove("hidden");
+    const tag = timestampTag();
+
+    images.forEach((img, idx) => {
+      const { url } = b64ToBlobUrl(img.b64, img.mimeType);
+      const ext =
+        img.mimeType.includes("png") ? "png" :
+        img.mimeType.includes("jpeg") ? "jpg" :
+        img.mimeType.includes("webp") ? "webp" : "bin";
+
+      const filename = `gemini3_image_${tag}_${String(idx + 1).padStart(2, "0")}.${ext}`;
+
+      const card = document.createElement("div");
+      card.className = "imgcard";
+
+      const imageEl = document.createElement("img");
+      imageEl.src = url;
+      imageEl.alt = `生成图片 ${idx + 1}`;
+
+      const bar = document.createElement("div");
+      bar.className = "bar";
+
+      const left = document.createElement("div");
+      left.textContent = `${img.mimeType || "image"} · ${filename}`;
+      left.style.color = "rgba(233,237,245,0.85)";
+      left.style.fontSize = "12px";
+
+      const right = document.createElement("div");
+      right.style.display = "flex";
+      right.style.gap = "12px";
+      right.style.flexWrap = "wrap";
+      right.style.alignItems = "center";
+
+      const openA = document.createElement("a");
+      openA.className = "link";
+      openA.href = url;
+      openA.target = "_blank";
+      openA.rel = "noopener";
+      openA.textContent = "打开原图";
+
+      const dlA = document.createElement("a");
+      dlA.className = "link";
+      dlA.href = url;
+      dlA.download = filename;
+      dlA.textContent = "下载";
+
+      right.appendChild(openA);
+      right.appendChild(dlA);
+
+      bar.appendChild(left);
+      bar.appendChild(right);
+
+      card.appendChild(imageEl);
+      card.appendChild(bar);
+
+      els.imagesOut.appendChild(card);
+    });
+  } else {
     els.imagesOutWrap.classList.add("hidden");
-    return;
-  }
-
-  els.imagesOutWrap.classList.remove("hidden");
-  const tag = timestampTag();
-
-  const cropOn = lastCropConfig.enabled && Number.isFinite(lastCropConfig.ratio) && lastCropConfig.ratio > 0;
-  if (cropOn) {
-    setStatus("请求成功，正在按原图比例裁切输出……", true);
-  }
-
-  for (let idx = 0; idx < images.length; idx++) {
-    const img = images[idx];
-
-    const origBlob = b64ToBlob(img.b64, img.mimeType);
-    const origUrl = blobToObjectUrlTracked(origBlob);
-
-    let shownBlob = origBlob;
-    let shownUrl = origUrl;
-    let shownLabel = "原始输出";
-
-    if (cropOn) {
-      try {
-        const cropped = await cropBlobToAspect(origBlob, img.mimeType, lastCropConfig.ratio);
-        shownBlob = cropped;
-        shownUrl = blobToObjectUrlTracked(cropped);
-        shownLabel = "裁切输出";
-      } catch {
-        // If crop fails, fallback to original
-        shownBlob = origBlob;
-        shownUrl = origUrl;
-        shownLabel = "原始输出（裁切失败，已回退）";
-      }
-    }
-
-    const extFromMime = (m) => {
-      if (!m) return "bin";
-      if (m.includes("png")) return "png";
-      if (m.includes("jpeg")) return "jpg";
-      if (m.includes("webp")) return "webp";
-      return "bin";
-    };
-
-    const ext = extFromMime(img.mimeType);
-    const baseName = `gemini3_image_${tag}_${String(idx + 1).padStart(2, "0")}`;
-    const shownName = cropOn ? `${baseName}_cropped.${ext}` : `${baseName}.${ext}`;
-    const origName = `${baseName}_original.${ext}`;
-
-    const card = document.createElement("div");
-    card.className = "imgcard";
-
-    const imageEl = document.createElement("img");
-    imageEl.src = shownUrl;
-    imageEl.alt = `输出图片 ${idx + 1}`;
-
-    const bar = document.createElement("div");
-    bar.className = "bar";
-
-    const top = document.createElement("div");
-    top.className = "barTop";
-
-    const left = document.createElement("div");
-    left.className = "smallMuted";
-    left.textContent = `${shownLabel} · ${img.mimeType || "image"}`;
-
-    const right = document.createElement("div");
-    right.style.display = "flex";
-    right.style.gap = "12px";
-    right.style.flexWrap = "wrap";
-    right.style.alignItems = "center";
-
-    const openShown = document.createElement("a");
-    openShown.className = "link";
-    openShown.href = shownUrl;
-    openShown.target = "_blank";
-    openShown.rel = "noopener";
-    openShown.textContent = "打开";
-
-    const dlShown = document.createElement("a");
-    dlShown.className = "link";
-    dlShown.href = shownUrl;
-    dlShown.download = shownName;
-    dlShown.textContent = "下载";
-
-    right.appendChild(openShown);
-    right.appendChild(dlShown);
-
-    top.appendChild(left);
-    top.appendChild(right);
-
-    bar.appendChild(top);
-
-    if (cropOn) {
-      const bottom = document.createElement("div");
-      bottom.className = "barBottom";
-
-      const openOrig = document.createElement("a");
-      openOrig.className = "link";
-      openOrig.href = origUrl;
-      openOrig.target = "_blank";
-      openOrig.rel = "noopener";
-      openOrig.textContent = "查看原始输出";
-
-      const dlOrig = document.createElement("a");
-      dlOrig.className = "link";
-      dlOrig.href = origUrl;
-      dlOrig.download = origName;
-      dlOrig.textContent = "下载原始输出";
-
-      bottom.appendChild(openOrig);
-      bottom.appendChild(dlOrig);
-      bar.appendChild(bottom);
-    }
-
-    card.appendChild(imageEl);
-    card.appendChild(bar);
-
-    els.imagesOut.appendChild(card);
-  }
-
-  if (cropOn) {
-    setStatus("", false);
   }
 }
 
-// ----- persistence (base state, excluding presets content itself) -----
+// ----- persistence (non-preset state) -----
 function persistBase() {
   localStorage.setItem(storageKeys.host, els.apiHost.value.trim());
   localStorage.setItem(storageKeys.rememberKey, String(els.rememberKey.checked));
@@ -804,13 +416,12 @@ function persistBase() {
   localStorage.setItem(storageKeys.uiMode, uiMode);
   localStorage.setItem(storageKeys.requestBodyJson, els.requestBodyJson.value);
 
+  // Keep some last used form values for convenience (not presets)
   localStorage.setItem(storageKeys.systemPrompt, els.systemPrompt.value);
   localStorage.setItem(storageKeys.aspectRatio, els.aspectRatio.value);
   localStorage.setItem(storageKeys.imageSize, els.imageSize.value);
   localStorage.setItem(storageKeys.temperature, els.temperature.value);
   localStorage.setItem(storageKeys.topP, els.topP.value);
-
-  localStorage.setItem(storageKeys.keepOriginalAspect, String(els.keepOriginalAspect.checked));
 
   if (els.rememberKey.checked) {
     localStorage.setItem(storageKeys.apiKey, els.apiKey.value);
@@ -833,12 +444,131 @@ function restoreBase() {
   els.temperature.value = localStorage.getItem(storageKeys.temperature) || "";
   els.topP.value = localStorage.getItem(storageKeys.topP) || "";
 
-  els.keepOriginalAspect.checked = (localStorage.getItem(storageKeys.keepOriginalAspect) || "false") === "true";
-
   const savedKey = localStorage.getItem(storageKeys.apiKey) || "";
   if (els.rememberKey.checked && savedKey) {
     els.apiKey.value = savedKey;
   }
+}
+
+// ----- mode switching -----
+function setMode(mode) {
+  uiMode = mode;
+  els.modeForm.classList.toggle("active", mode === "form");
+  els.modeJson.classList.toggle("active", mode === "json");
+  els.modeForm.setAttribute("aria-selected", String(mode === "form"));
+  els.modeJson.setAttribute("aria-selected", String(mode === "json"));
+
+  els.formModeWrap.classList.toggle("hidden", mode !== "form");
+  els.jsonModeWrap.classList.toggle("hidden", mode !== "json");
+
+  // On entering JSON mode: sync from form to JSON by default (non-destructive)
+  if (mode === "json") {
+    try {
+      const body = buildBodyFromForm();
+      els.requestBodyJson.value = JSON.stringify(body, null, 2);
+      setStatus("", false);
+    } catch (e) {
+      // If form incomplete, keep existing JSON; show hint
+      setStatus(`切换到 JSON 模式：无法从表单生成默认 JSON（${e?.message || e}）。你可以直接编辑 JSON。`, true);
+    }
+  }
+
+  persistBase();
+}
+
+function formatJsonEditor() {
+  const raw = els.requestBodyJson.value.trim();
+  if (!raw) { setStatus("JSON 为空。", true); return; }
+  try {
+    const obj = JSON.parse(raw);
+    els.requestBodyJson.value = JSON.stringify(obj, null, 2);
+    setStatus("已格式化 JSON。", true);
+    setTimeout(() => setStatus("", false), 1000);
+  } catch (e) {
+    setStatus(`JSON 解析失败：${e?.message || e}`, true);
+  }
+}
+
+function syncJsonFromForm() {
+  try {
+    const body = buildBodyFromForm();
+    els.requestBodyJson.value = JSON.stringify(body, null, 2);
+    setStatus("已从表单同步生成 JSON。", true);
+    setTimeout(() => setStatus("", false), 1000);
+    persistBase();
+  } catch (e) {
+    setStatus(e?.message || String(e), true);
+  }
+}
+
+function applyJsonToFormBestEffort() {
+  const raw = els.requestBodyJson.value.trim();
+  if (!raw) { setStatus("JSON 为空，无法回填。", true); return; }
+
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch (e) {
+    setStatus(`JSON 解析失败：${e?.message || e}`, true);
+    return;
+  }
+
+  // system prompt
+  try {
+    const sp = obj?.systemInstruction?.parts?.[0]?.text;
+    if (typeof sp === "string") els.systemPrompt.value = sp;
+  } catch {}
+
+  // prompt + image from first user parts
+  try {
+    const parts = obj?.contents?.[0]?.parts || [];
+    let text = "";
+    let inline = null;
+
+    for (const p of parts) {
+      if (!text && typeof p?.text === "string") text = p.text;
+      const cand = p?.inline_data || p?.inlineData;
+      if (!inline && cand?.data) inline = cand;
+    }
+    if (text) els.prompt.value = text;
+
+    if (inline?.data) {
+      // replace selectedImage from base64
+      clearSelectedImage();
+      const mimeType = inline.mime_type || inline.mimeType || "application/octet-stream";
+      const base64 = inline.data;
+      const { url, blob } = b64ToBlobUrl(base64, mimeType); // reuse helper to make preview URL
+      // NOTE: b64ToBlobUrl adds to objectUrls; but that's for output cleanup.
+      // For input preview we need a persistent URL not cleaned by output cleanup,
+      // so we create a dedicated one:
+      URL.revokeObjectURL(url);
+      const inputBlob = new Blob([blob], { type: mimeType });
+      const dataUrl = URL.createObjectURL(inputBlob);
+
+      selectedImage = {
+        mimeType,
+        base64,
+        size: inputBlob.size || base64.length,
+        name: "preset_image",
+        dataUrl,
+      };
+      showSelectedImage(selectedImage);
+    }
+  } catch {}
+
+  // generation config
+  try {
+    const gc = obj?.generationConfig || {};
+    if (typeof gc.temperature === "number") els.temperature.value = String(gc.temperature);
+    if (typeof gc.topP === "number") els.topP.value = String(gc.topP);
+    const ic = gc.imageConfig || {};
+    if (typeof ic.aspectRatio === "string") els.aspectRatio.value = ic.aspectRatio;
+    if (typeof ic.imageSize === "string") els.imageSize.value = ic.imageSize;
+  } catch {}
+
+  setStatus("已尽力将 JSON 回填到表单（可能存在字段不完全匹配）。", true);
+  setTimeout(() => setStatus("", false), 1400);
+  persistBase();
 }
 
 // ----- presets -----
@@ -862,6 +592,7 @@ function refreshPresetUI() {
   const presets = loadPresets();
   const activeName = localStorage.getItem(storageKeys.activePreset) || "";
 
+  // Rebuild options
   els.presetSelect.innerHTML = "";
   const empty = document.createElement("option");
   empty.value = "";
@@ -886,7 +617,7 @@ function getCurrentPresetName() {
 }
 
 function makePresetFromCurrentState() {
-  return {
+  const preset = {
     name: "",
     createdAt: nowISO(),
     updatedAt: nowISO(),
@@ -898,56 +629,22 @@ function makePresetFromCurrentState() {
       imageSize: els.imageSize.value,
       temperature: els.temperature.value,
       topP: els.topP.value,
-      keepOriginalAspect: !!selectedImage && els.keepOriginalAspect.checked,
     },
     image: selectedImage ? {
       mimeType: selectedImage.mimeType,
       base64: selectedImage.base64,
       name: selectedImage.name,
       size: selectedImage.size,
-      width: selectedImage.width,
-      height: selectedImage.height,
     } : null,
     requestBodyJson: els.requestBodyJson.value,
   };
+  return preset;
 }
 
 function applyPreset(preset) {
-  // DO NOT touch host/key
-  // Image first (affects keepOriginal availability)
-  clearSelectedImage();
-
-  if (preset.image?.base64) {
-    const mimeType = preset.image.mimeType || "application/octet-stream";
-    const base64 = preset.image.base64;
-
-    const blob = b64ToBlob(base64, mimeType);
-    revokeInputObjectUrl();
-    inputObjectUrl = URL.createObjectURL(blob);
-
-    const img = new Image();
-    img.src = inputObjectUrl;
-
-    const finalize = async () => {
-      try { await img.decode(); } catch {}
-      const width = img.naturalWidth || preset.image.width || img.width;
-      const height = img.naturalHeight || preset.image.height || img.height;
-      selectedImage = {
-        mimeType,
-        base64,
-        size: preset.image.size || blob.size,
-        name: preset.image.name || "preset_image",
-        dataUrl: inputObjectUrl,
-        width,
-        height,
-        ratio: (width && height) ? width / height : null,
-      };
-      showSelectedImage(selectedImage);
-      enforceKeepOriginalAvailability();
-    };
-
-    finalize();
-  }
+  // DO NOT touch host/key (as required)
+  // Mode
+  setMode(preset.mode === "json" ? "json" : "form");
 
   // Fields
   const f = preset.fields || {};
@@ -957,17 +654,30 @@ function applyPreset(preset) {
   els.imageSize.value = f.imageSize ?? "";
   els.temperature.value = f.temperature ?? "";
   els.topP.value = f.topP ?? "";
-  els.keepOriginalAspect.checked = !!f.keepOriginalAspect;
 
-  // Mode
-  setMode(preset.mode === "json" ? "json" : "form", { silent: true });
-
+  // JSON body
   if (typeof preset.requestBodyJson === "string") {
     els.requestBodyJson.value = preset.requestBodyJson;
   }
 
-  // Enforce constraints after everything applied
-  enforceKeepOriginalAvailability();
+  // Image
+  clearSelectedImage();
+  if (preset.image?.base64) {
+    const mimeType = preset.image.mimeType || "application/octet-stream";
+    const base64 = preset.image.base64;
+    const { blob } = b64ToBlobUrl(base64, mimeType);
+    const inputBlob = new Blob([blob], { type: mimeType });
+    const dataUrl = URL.createObjectURL(inputBlob);
+
+    selectedImage = {
+      mimeType,
+      base64,
+      size: preset.image.size || inputBlob.size,
+      name: preset.image.name || "preset_image",
+      dataUrl,
+    };
+    showSelectedImage(selectedImage);
+  }
 
   persistBase();
   setStatus(`已应用预设：${preset.name}\n（Host / Key 未改变）`, true);
@@ -988,7 +698,9 @@ function saveAsPreset() {
     next.name = name;
     next.createdAt = existing.createdAt || nowISO();
     next.updatedAt = nowISO();
-    presets[presets.findIndex(p => p.name === name)] = next;
+
+    const idx = presets.findIndex(p => p.name === name);
+    presets[idx] = next;
   } else {
     const next = makePresetFromCurrentState();
     next.name = name;
@@ -1057,7 +769,11 @@ function deleteActivePreset() {
 
 function exportPresets() {
   const presets = loadPresets();
-  const payload = { version: 1, exportedAt: nowISO(), presets };
+  const payload = {
+    version: 1,
+    exportedAt: nowISO(),
+    presets,
+  };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
 
@@ -1075,20 +791,31 @@ function exportPresets() {
 
 async function importPresetsFromFile(file) {
   if (!file) return;
-
   let text = "";
-  try { text = await file.text(); }
-  catch (e) { setStatus(`读取导入文件失败：${e?.message || e}`, true); return; }
+  try {
+    text = await file.text();
+  } catch (e) {
+    setStatus(`读取导入文件失败：${e?.message || e}`, true);
+    return;
+  }
 
   let obj;
-  try { obj = JSON.parse(text); }
-  catch (e) { setStatus(`导入失败：JSON 解析错误：${e?.message || e}`, true); return; }
+  try {
+    obj = JSON.parse(text);
+  } catch (e) {
+    setStatus(`导入失败：JSON 解析错误：${e?.message || e}`, true);
+    return;
+  }
 
   const incoming = Array.isArray(obj?.presets) ? obj.presets : (Array.isArray(obj) ? obj : []);
-  if (!incoming.length) { setStatus("导入失败：未发现 presets 数组。", true); return; }
+  if (!incoming.length) {
+    setStatus("导入失败：未发现 presets 数组。", true);
+    return;
+  }
 
   const existing = loadPresets();
   const nameSet = new Set(existing.map(p => p.name));
+
   const merged = [...existing];
   let added = 0;
 
@@ -1097,6 +824,7 @@ async function importPresetsFromFile(file) {
     let name = String(p.name).trim();
     if (!name) continue;
 
+    // Resolve conflicts: append suffix
     if (nameSet.has(name)) {
       let i = 1;
       while (nameSet.has(`${name}（导入${i}）`)) i++;
@@ -1115,15 +843,12 @@ async function importPresetsFromFile(file) {
         imageSize: p?.fields?.imageSize ?? "",
         temperature: p?.fields?.temperature ?? "",
         topP: p?.fields?.topP ?? "",
-        keepOriginalAspect: !!p?.fields?.keepOriginalAspect,
       },
       image: p?.image?.base64 ? {
         mimeType: p.image.mimeType || "application/octet-stream",
         base64: p.image.base64,
         name: p.image.name || "preset_image",
         size: p.image.size || p.image.base64.length,
-        width: p.image.width,
-        height: p.image.height,
       } : null,
       requestBodyJson: typeof p.requestBodyJson === "string" ? p.requestBodyJson : "",
     };
@@ -1133,10 +858,14 @@ async function importPresetsFromFile(file) {
     added++;
   }
 
-  if (!added) { setStatus("导入完成：未新增任何有效预设。", true); return; }
+  if (!added) {
+    setStatus("导入完成：未新增任何有效预设。", true);
+    return;
+  }
 
-  try { savePresets(merged); }
-  catch (e) {
+  try {
+    savePresets(merged);
+  } catch (e) {
     setStatus(`导入失败：可能是本地存储空间不足（预设图片会占用较多空间）。\n${e?.message || e}`, true);
     return;
   }
@@ -1146,7 +875,7 @@ async function importPresetsFromFile(file) {
   setTimeout(() => setStatus("", false), 1400);
 }
 
-// ----- fetch -----
+// ----- run -----
 async function doFetchOnce(req) {
   const t0 = performance.now();
   const resp = await fetch(req.url, {
@@ -1154,8 +883,10 @@ async function doFetchOnce(req) {
     headers: req.headers,
     body: JSON.stringify(req.body),
   });
+
   const data = await resp.json().catch(() => ({}));
   const t1 = performance.now();
+
   return { resp, data, ms: (t1 - t0) };
 }
 
@@ -1163,19 +894,25 @@ async function run() {
   persistBase();
   setStatus("正在请求模型生成……", true);
 
+  // Clear prior output
   els.resultEmpty.classList.add("hidden");
   els.result.classList.add("hidden");
   els.textOutWrap.classList.add("hidden");
   els.imagesOutWrap.classList.add("hidden");
   els.rawJson.textContent = "";
-  cleanupOutputObjectUrls();
+  cleanupObjectUrls();
 
   let req;
-  try { req = buildRequest(); }
-  catch (e) { setStatus(e.message || String(e), true); return; }
+  try {
+    req = buildRequest();
+  } catch (e) {
+    setStatus(e.message || String(e), true);
+    return;
+  }
 
   lastRequest = req;
 
+  // iOS后台优化：记录可见性 + WakeLock（best-effort）
   requestInFlight = true;
   hiddenDuringRequest = false;
   await requestWakeLock();
@@ -1194,15 +931,15 @@ async function run() {
           return;
         }
 
-        // Render (may async crop)
         setStatus("", false);
-        await renderResult({ data, ms });
+        renderResult({ data, ms });
         return;
-
       } catch (e) {
+        // 仅在“后台期间发生 + 网络类错误 + 未重试过”的情况下自动重试一次
         if (!didAutoRetry && hiddenDuringRequest && isLikelyNetworkError(e)) {
           didAutoRetry = true;
           setStatus("检测到请求过程中页面进入后台导致网络中断，正在自动重试一次……", true);
+          // 重新申请 wake lock（若可用）
           if (document.visibilityState === "visible") await requestWakeLock();
           continue;
         }
@@ -1211,7 +948,7 @@ async function run() {
     }
   } catch (e) {
     setStatus(
-      `网络或浏览器限制导致请求失败：${e?.message || e}\n\n（提示：iOS Safari 后台可能冻结网络；建议尽量保持前台直到完成，或使用自定义 Host/反代提升可用性。）`,
+      `网络或浏览器限制导致请求失败：${e?.message || e}\n\n（提示：若 iOS Safari 经常后台失败，建议尽量保持前台完成一次请求；或使用自定义 Host/反代提升可用性。）`,
       true
     );
     els.resultEmpty.classList.remove("hidden");
@@ -1231,7 +968,6 @@ function resetNonFixedFields() {
   els.temperature.value = "";
   els.topP.value = "";
   els.requestBodyJson.value = "";
-  els.keepOriginalAspect.checked = false;
   clearSelectedImage();
 
   setStatus("", false);
@@ -1249,15 +985,15 @@ async function handleImageFile(file) {
   }
 
   clearSelectedImage();
-  const info = await readImageFileWithMeta(file);
+  const info = await readImageFile(file);
   selectedImage = info;
   showSelectedImage(info);
 
-  enforceKeepOriginalAvailability();
   persistBase();
 }
 
 function wireEvents() {
+  // Persist on change for fixed fields & general state
   ["input", "change"].forEach((evt) => {
     els.apiHost.addEventListener(evt, persistBase);
     els.apiKey.addEventListener(evt, persistBase);
@@ -1272,37 +1008,30 @@ function wireEvents() {
     els.topP.addEventListener(evt, persistBase);
 
     els.requestBodyJson.addEventListener(evt, persistBase);
-    els.keepOriginalAspect.addEventListener(evt, () => {
-      enforceKeepOriginalAvailability();
-      if (els.keepOriginalAspect.checked) {
-        setStatus("已开启“保持原图比例”：将自动选择最接近原图的生成比例，并在网页端裁切回原图比例；同时禁用 JSON 模式。", true);
-        setTimeout(() => setStatus("", false), 1600);
-      }
-    });
   });
 
   els.rememberKey.addEventListener("change", () => {
-    if (!els.rememberKey.checked) localStorage.removeItem(storageKeys.apiKey);
-    else localStorage.setItem(storageKeys.apiKey, els.apiKey.value);
+    if (!els.rememberKey.checked) {
+      localStorage.removeItem(storageKeys.apiKey);
+    } else {
+      localStorage.setItem(storageKeys.apiKey, els.apiKey.value);
+    }
   });
 
   els.apiKey.addEventListener("input", () => {
     if (els.rememberKey.checked) localStorage.setItem(storageKeys.apiKey, els.apiKey.value);
   });
 
+  // mode switch
   els.modeForm.addEventListener("click", () => setMode("form"));
-  els.modeJson.addEventListener("click", () => {
-    if (els.keepOriginalAspect.checked && selectedImage) {
-      setStatus("已开启“保持原图比例”，JSON 模式不可用。", true);
-      return;
-    }
-    setMode("json");
-  });
+  els.modeJson.addEventListener("click", () => setMode("json"));
 
+  // json tools
   els.jsonFormat.addEventListener("click", formatJsonEditor);
   els.jsonFromForm.addEventListener("click", syncJsonFromForm);
-  els.jsonToForm.addEventListener("click", () => applyJsonToFormBestEffort());
+  els.jsonToForm.addEventListener("click", applyJsonToFormBestEffort);
 
+  // Drag & drop
   const onDrag = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1331,25 +1060,33 @@ function wireEvents() {
 
   els.clearImage.addEventListener("click", () => clearSelectedImage());
 
+  // run
   els.form.addEventListener("submit", async (e) => {
     e.preventDefault();
     els.runBtn.disabled = true;
-    try { await run(); }
-    finally { els.runBtn.disabled = false; }
+    try {
+      await run();
+    } finally {
+      els.runBtn.disabled = false;
+    }
   });
 
+  // reset
   els.resetBtn.addEventListener("click", resetNonFixedFields);
 
+  // copy
   els.copyCurl.addEventListener("click", async () => {
     if (!lastRequest) return;
-    await navigator.clipboard.writeText(makeCurl(lastRequest));
+    const curl = makeCurl(lastRequest);
+    await navigator.clipboard.writeText(curl);
     setStatus("已复制 cURL 到剪贴板。", true);
     setTimeout(() => setStatus("", false), 1200);
   });
 
   els.copyJson.addEventListener("click", async () => {
     if (!lastRequest) return;
-    await navigator.clipboard.writeText(JSON.stringify(lastRequest.body, null, 2));
+    const json = JSON.stringify(lastRequest.body, null, 2);
+    await navigator.clipboard.writeText(json);
     setStatus("已复制请求 JSON 到剪贴板。", true);
     setTimeout(() => setStatus("", false), 1200);
   });
@@ -1380,9 +1117,15 @@ function wireEvents() {
     await importPresetsFromFile(f);
   });
 
+  // iOS background detection
   document.addEventListener("visibilitychange", async () => {
-    if (requestInFlight && document.visibilityState === "hidden") hiddenDuringRequest = true;
-    if (requestInFlight && document.visibilityState === "visible") await requestWakeLock();
+    if (requestInFlight && document.visibilityState === "hidden") {
+      hiddenDuringRequest = true;
+    }
+    if (requestInFlight && document.visibilityState === "visible") {
+      // reacquire wake lock best-effort
+      await requestWakeLock();
+    }
   });
 }
 
@@ -1391,11 +1134,10 @@ function init() {
   restoreBase();
   wireEvents();
 
-  setMode(uiMode === "json" ? "json" : "form", { silent: true });
+  // ensure mode is applied
+  setMode(uiMode === "json" ? "json" : "form");
 
-  // No image at startup unless loaded via preset -> keepOriginal must be disabled
-  enforceKeepOriginalAvailability();
-
+  // presets ui
   refreshPresetUI();
   const activeName = localStorage.getItem(storageKeys.activePreset) || "";
   if (activeName) {
