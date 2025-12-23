@@ -15,7 +15,7 @@
         <div class="title-left">
           <h1 class="title">Gemini 3 Pro Image Preview API 调用器</h1>
           <p class="subtitle">
-            支持：Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP / 预设 / JSON 请求体
+            支持：Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP / 预设 / JSON 请求体 / 保持原图比例裁切
           </p>
         </div>
 
@@ -42,7 +42,6 @@
       <h2 class="section-title">配置</h2>
 
       <form id="form" autocomplete="off">
-        <!-- Host / Key 区：不随预设变化 -->
         <div class="grid">
           <label class="field">
             <span class="label">API 主机地址（可选）</span>
@@ -67,13 +66,11 @@
           </label>
         </div>
 
-        <!-- 模式切换 -->
         <div class="modebar" role="tablist" aria-label="请求体编辑模式">
           <button id="modeForm" type="button" class="seg active" role="tab" aria-selected="true">表单模式</button>
           <button id="modeJson" type="button" class="seg" role="tab" aria-selected="false">JSON 模式</button>
         </div>
 
-        <!-- 表单模式区域 -->
         <div id="formModeWrap">
           <div class="grid">
             <label class="field full">
@@ -96,6 +93,13 @@
                 <input id="imageFile" type="file" accept="image/*" />
               </div>
 
+              <div class="row" style="margin-top:10px;">
+                <label class="checkbox">
+                  <input id="keepOriginalAspect" type="checkbox" disabled />
+                  <span>保持原图比例（自动裁切输出；将禁用 JSON 模式）</span>
+                </label>
+              </div>
+
               <div id="imagePreview" class="preview hidden">
                 <img id="imagePreviewImg" alt="输入图片预览" />
                 <div class="preview-meta">
@@ -104,7 +108,9 @@
                 </div>
               </div>
 
-              <span class="hint">上传图片后，可在提示词中写“把这张图改成…… / 在保持主体不变的情况下……”</span>
+              <span class="hint">
+                勾选“保持原图比例”后：模型会被要求尽量贴近原图宽高比；如不支持，则用纯黑补齐画幅外区域；网页将按原图宽高比裁切输出，并提供查看未经裁切的原始输出。
+              </span>
             </div>
 
             <label class="field">
@@ -122,6 +128,7 @@
                 <option value="16:9">16:9</option>
                 <option value="21:9">21:9</option>
               </select>
+              <span class="hint">勾选“保持原图比例”后，这个选项会被锁定（由系统自动选择最接近的比例）。</span>
             </label>
 
             <label class="field">
@@ -147,7 +154,6 @@
           </div>
         </div>
 
-        <!-- JSON 模式区域 -->
         <div id="jsonModeWrap" class="hidden">
           <div class="jsonbar">
             <button id="jsonFormat" type="button" class="btn secondary">格式化 JSON</button>
@@ -158,7 +164,7 @@
           <label class="field full">
             <span class="label">请求体 JSON（将直接作为 POST body 发送）</span>
             <textarea id="requestBodyJson" rows="16" spellcheck="false"
-              placeholder='例如：{"contents":[{"role":"user","parts":[{"text":"..." }]}],"generationConfig":{"responseModalities":["Image"]}}'></textarea>
+              placeholder='例如：{"contents":[{"role":"user","parts":[{"text":"..."}]}],"generationConfig":{"responseModalities":["Image"]}}'></textarea>
             <span class="hint">提示：Host / Key 不在此 JSON 中；仍由上方固定配置决定。</span>
           </label>
         </div>
@@ -209,7 +215,7 @@
           <h3 class="block-title">图片输出</h3>
           <div id="imagesOut" class="gallery"></div>
           <p class="hint">
-            iOS Safari 如遇“下载”不生效，请点击“打开原图”后长按图片保存到相册。
+            iOS Safari 如遇“下载”不生效，请点击“打开”后长按图片保存到相册。
           </p>
         </div>
 
