@@ -1,6 +1,8 @@
 const MODEL_ID = "gemini-3-pro-image-preview";
 const DEFAULT_HOST = "https://generativelanguage.googleapis.com";
 const API_PATH = `/v1beta/models/${MODEL_ID}:generateContent`;
+const KEEP_ORIGINAL_PROMPT =
+  "在基于输入图片生成或编辑时，优先匹配输入图片的宽高比，若模型无法生成完全一致的比例，则请将超出输入画幅的区域用纯黑填充，不要生成画幅之外的任何新内容。生成后请确保可以裁切为与输入图片相同的画幅比例。";
 
 // ----- utils -----
 const $ = (id) => document.getElementById(id);
@@ -69,6 +71,7 @@ const els = {
   imagePreviewImg: $("imagePreviewImg"),
   imageMeta: $("imageMeta"),
   clearImage: $("clearImage"),
+  keepOriginalAspect: $("keepOriginalAspect"),
   aspectRatio: $("aspectRatio"),
   imageSize: $("imageSize"),
   temperature: $("temperature"),
@@ -120,6 +123,7 @@ const storageKeys = {
 
   // form values
   systemPrompt: "g3_system_prompt",
+  keepOriginalAspect: "g3_keep_original_aspect",
   aspectRatio: "g3_aspect_ratio",
   imageSize: "g3_image_size",
   temperature: "g3_temperature",
@@ -132,7 +136,7 @@ const storageKeys = {
 
 // ----- state -----
 let uiMode = "form"; // "form" | "json"
-let selectedImage = null; // { mimeType, base64, size, name, dataUrl }
+let selectedImage = null; // { mimeType, base64, size, name, dataUrl, width, height }
 let lastRequest = null;   // { url, headers, body }
 let objectUrls = [];      // blob URLs for output images
 
@@ -148,14 +152,32 @@ function setStatus(msg, visible = true) {
 }
 
 // ----- image helpers -----
+function loadImageDimensions(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height });
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
 async function readImageFile(file) {
   const mimeType = file.type || "application/octet-stream";
   const size = file.size;
   const name = file.name || "image";
+  const dataUrl = URL.createObjectURL(file); // preview only
+
+  let width = null;
+  let height = null;
+  try {
+    ({ width, height } = await loadImageDimensions(dataUrl));
+  } catch {}
+
   const arrayBuf = await file.arrayBuffer();
   const base64 = base64FromArrayBuffer(arrayBuf);
-  const dataUrl = URL.createObjectURL(file); // preview only
-  return { mimeType, size, name, base64, dataUrl };
+  return { mimeType, size, name, base64, dataUrl, width, height };
 }
 
 function clearSelectedImage() {
@@ -165,11 +187,18 @@ function clearSelectedImage() {
   els.imagePreviewImg.src = "";
   els.imageMeta.textContent = "";
   if (els.imageFile) els.imageFile.value = "";
+
+  // 保持原图比例选项仅在存在图片时可用
+  if (els.keepOriginalAspect) {
+    els.keepOriginalAspect.checked = false;
+    updateKeepOriginalAspectState();
+  }
 }
 
 function showSelectedImage(info) {
   els.imagePreviewImg.src = info.dataUrl;
-  els.imageMeta.textContent = `${info.name} · ${humanBytes(info.size)} · ${info.mimeType}`;
+  const dimStr = (info.width && info.height) ? ` · ${info.width}×${info.height}` : "";
+  els.imageMeta.textContent = `${info.name} · ${humanBytes(info.size)} · ${info.mimeType}${dimStr}`;
   els.imagePreview.classList.remove("hidden");
 }
 
@@ -187,6 +216,42 @@ function b64ToBlobUrl(b64, mimeType) {
 function cleanupObjectUrls() {
   for (const u of objectUrls) URL.revokeObjectURL(u);
   objectUrls = [];
+}
+
+function isKeepOriginalAspectEnabled() {
+  return !!selectedImage && !!els.keepOriginalAspect?.checked;
+}
+
+function updateKeepOriginalAspectState() {
+  const hasImage = !!selectedImage;
+  if (!els.keepOriginalAspect) return;
+
+  els.keepOriginalAspect.disabled = !hasImage;
+  els.keepOriginalAspect.parentElement?.classList.toggle("disabled", !hasImage);
+
+  if (!hasImage && els.keepOriginalAspect.checked) {
+    els.keepOriginalAspect.checked = false;
+  }
+
+  const lockJson = isKeepOriginalAspectEnabled();
+  els.modeJson.disabled = lockJson;
+  els.modeJson.title = lockJson
+    ? "已启用保持原图比例，暂不可使用自定义 JSON 模式"
+    : "切换到 JSON 模式";
+  [els.jsonFormat, els.jsonFromForm, els.jsonToForm].forEach((btn) => {
+    if (!btn) return;
+    btn.disabled = lockJson;
+    btn.title = lockJson
+      ? "保持原图比例开启时禁用 JSON 工具"
+      : "";
+  });
+
+  // 强制停留在表单模式
+  if (lockJson && uiMode === "json") {
+    setMode("form");
+    setStatus("保持原图比例开启时已切回表单模式，JSON 模式不可用。", true);
+    setTimeout(() => setStatus("", false), 1400);
+  }
 }
 
 // ----- wake lock (best-effort) -----
@@ -208,9 +273,11 @@ function releaseWakeLock() {
 
 // ----- build body (form mode) -----
 function buildBodyFromForm() {
+  const keepOriginalAspect = isKeepOriginalAspectEnabled();
+
   const systemPrompt = els.systemPrompt.value.trim();
   const prompt = els.prompt.value.trim();
-  const aspectRatio = els.aspectRatio.value;
+  const aspectRatio = keepOriginalAspect ? "" : els.aspectRatio.value;
   const imageSize = els.imageSize.value;
 
   const temperature = safeNumberOrEmpty(els.temperature.value);
@@ -238,9 +305,18 @@ function buildBodyFromForm() {
     },
   };
 
-  if (systemPrompt) {
+  const systemParts = [];
+  if (keepOriginalAspect) {
+    const dims = (selectedImage?.width && selectedImage?.height)
+      ? ` 输入图片宽度：${selectedImage.width}，高度：${selectedImage.height}，宽高比（宽/高）：${(selectedImage.width / selectedImage.height).toFixed(4)}`
+      : "";
+    systemParts.push(`${KEEP_ORIGINAL_PROMPT}${dims}`.trim());
+  }
+  if (systemPrompt) systemParts.push(systemPrompt);
+
+  if (systemParts.length) {
     body.systemInstruction = {
-      parts: [{ text: systemPrompt }],
+      parts: systemParts.map(text => ({ text })),
     };
   }
 
@@ -263,6 +339,10 @@ function buildRequest() {
   const useHeaderKey = els.useHeaderKey.checked;
 
   if (!apiKey) throw new Error("请填写 API Key。");
+
+  if (uiMode === "json" && isKeepOriginalAspectEnabled()) {
+    throw new Error("已启用保持原图比例，暂不支持自定义 JSON 模式。请切换到表单模式。");
+  }
 
   const url = useHeaderKey
     ? `${host}${API_PATH}`
@@ -307,7 +387,60 @@ function timestampTag() {
   return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function renderResult({ data, ms }) {
+function loadImageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function cropImageToAspect(url, targetAspect) {
+  if (!targetAspect || !Number.isFinite(targetAspect) || targetAspect <= 0) {
+    return { url, cropped: false };
+  }
+
+  const img = await loadImageFromUrl(url);
+  const originalAspect = img.naturalWidth / img.naturalHeight;
+  if (!Number.isFinite(originalAspect) || Math.abs(originalAspect - targetAspect) < 0.0001) {
+    return {
+      url,
+      cropped: false,
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+    };
+  }
+
+  let sx = 0;
+  let sy = 0;
+  let sw = img.naturalWidth;
+  let sh = img.naturalHeight;
+
+  if (originalAspect > targetAspect) {
+    sw = img.naturalHeight * targetAspect;
+    sx = (img.naturalWidth - sw) / 2;
+  } else {
+    sh = img.naturalWidth / targetAspect;
+    sy = (img.naturalHeight - sh) / 2;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = sw;
+  canvas.height = sh;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob((b) => b ? resolve(b) : reject(new Error("裁切失败")), "image/png");
+  });
+  const croppedUrl = URL.createObjectURL(blob);
+  objectUrls.push(croppedUrl);
+
+  return { url: croppedUrl, cropped: true, width: sw, height: sh, rawWidth: img.naturalWidth, rawHeight: img.naturalHeight };
+}
+
+async function renderResult({ data, ms }) {
   els.resultEmpty.classList.add("hidden");
   els.result.classList.remove("hidden");
 
@@ -348,7 +481,7 @@ function renderResult({ data, ms }) {
     els.imagesOutWrap.classList.remove("hidden");
     const tag = timestampTag();
 
-    images.forEach((img, idx) => {
+    for (const [idx, img] of images.entries()) {
       const { url } = b64ToBlobUrl(img.b64, img.mimeType);
       const ext =
         img.mimeType.includes("png") ? "png" :
@@ -357,18 +490,35 @@ function renderResult({ data, ms }) {
 
       const filename = `gemini3_image_${tag}_${String(idx + 1).padStart(2, "0")}.${ext}`;
 
+      const targetAspect = isKeepOriginalAspectEnabled() && selectedImage?.width && selectedImage?.height
+        ? (selectedImage.width / selectedImage.height)
+        : null;
+      let cropResult = { url, cropped: false };
+      if (targetAspect) {
+        try {
+          cropResult = await cropImageToAspect(url, targetAspect);
+        } catch (e) {
+          console.warn("裁切到原图比例失败，已回退原始输出", e);
+          cropResult = { url, cropped: false };
+        }
+      }
+      const { url: displayUrl, cropped, rawWidth, rawHeight, width, height } = cropResult;
+
       const card = document.createElement("div");
       card.className = "imgcard";
 
       const imageEl = document.createElement("img");
-      imageEl.src = url;
+      imageEl.src = displayUrl;
       imageEl.alt = `生成图片 ${idx + 1}`;
 
       const bar = document.createElement("div");
       bar.className = "bar";
 
       const left = document.createElement("div");
-      left.textContent = `${img.mimeType || "image"} · ${filename}`;
+      const cropInfo = cropped && rawWidth && rawHeight
+        ? ` · 已裁切到 ${Math.round(width)}×${Math.round(height)}（原始 ${rawWidth}×${rawHeight}）`
+        : "";
+      left.textContent = `${img.mimeType || "image"} · ${filename}${cropInfo}`;
       left.style.color = "rgba(233,237,245,0.85)";
       left.style.fontSize = "12px";
 
@@ -378,21 +528,29 @@ function renderResult({ data, ms }) {
       right.style.flexWrap = "wrap";
       right.style.alignItems = "center";
 
-      const openA = document.createElement("a");
-      openA.className = "link";
-      openA.href = url;
-      openA.target = "_blank";
-      openA.rel = "noopener";
-      openA.textContent = "打开原图";
+      const openProcessed = document.createElement("a");
+      openProcessed.className = "link";
+      openProcessed.href = displayUrl;
+      openProcessed.target = "_blank";
+      openProcessed.rel = "noopener";
+      openProcessed.textContent = cropped ? "打开裁切后" : "打开";
 
-      const dlA = document.createElement("a");
-      dlA.className = "link";
-      dlA.href = url;
-      dlA.download = filename;
-      dlA.textContent = "下载";
+      const dlProcessed = document.createElement("a");
+      dlProcessed.className = "link";
+      dlProcessed.href = displayUrl;
+      dlProcessed.download = filename;
+      dlProcessed.textContent = cropped ? "下载裁切后" : "下载";
 
-      right.appendChild(openA);
-      right.appendChild(dlA);
+      const openRaw = document.createElement("a");
+      openRaw.className = "link";
+      openRaw.href = url;
+      openRaw.target = "_blank";
+      openRaw.rel = "noopener";
+      openRaw.textContent = "查看原始输出";
+
+      right.appendChild(openProcessed);
+      right.appendChild(dlProcessed);
+      right.appendChild(openRaw);
 
       bar.appendChild(left);
       bar.appendChild(right);
@@ -418,6 +576,7 @@ function persistBase() {
 
   // Keep some last used form values for convenience (not presets)
   localStorage.setItem(storageKeys.systemPrompt, els.systemPrompt.value);
+  localStorage.setItem(storageKeys.keepOriginalAspect, String(isKeepOriginalAspectEnabled()));
   localStorage.setItem(storageKeys.aspectRatio, els.aspectRatio.value);
   localStorage.setItem(storageKeys.imageSize, els.imageSize.value);
   localStorage.setItem(storageKeys.temperature, els.temperature.value);
@@ -439,6 +598,7 @@ function restoreBase() {
   els.requestBodyJson.value = localStorage.getItem(storageKeys.requestBodyJson) || "";
 
   els.systemPrompt.value = localStorage.getItem(storageKeys.systemPrompt) || "";
+  els.keepOriginalAspect.checked = (localStorage.getItem(storageKeys.keepOriginalAspect) || "false") === "true";
   els.aspectRatio.value = localStorage.getItem(storageKeys.aspectRatio) || "";
   els.imageSize.value = localStorage.getItem(storageKeys.imageSize) || "";
   els.temperature.value = localStorage.getItem(storageKeys.temperature) || "";
@@ -452,6 +612,11 @@ function restoreBase() {
 
 // ----- mode switching -----
 function setMode(mode) {
+  if (mode === "json" && isKeepOriginalAspectEnabled()) {
+    setStatus("保持原图比例开启时无法使用自定义 JSON 模式。", true);
+    return;
+  }
+
   uiMode = mode;
   els.modeForm.classList.toggle("active", mode === "form");
   els.modeJson.classList.toggle("active", mode === "json");
@@ -501,7 +666,7 @@ function syncJsonFromForm() {
   }
 }
 
-function applyJsonToFormBestEffort() {
+async function applyJsonToFormBestEffort() {
   const raw = els.requestBodyJson.value.trim();
   if (!raw) { setStatus("JSON 为空，无法回填。", true); return; }
 
@@ -545,14 +710,23 @@ function applyJsonToFormBestEffort() {
       const inputBlob = new Blob([blob], { type: mimeType });
       const dataUrl = URL.createObjectURL(inputBlob);
 
+      let width = null;
+      let height = null;
+      try {
+        ({ width, height } = await loadImageDimensions(dataUrl));
+      } catch {}
+
       selectedImage = {
         mimeType,
         base64,
         size: inputBlob.size || base64.length,
         name: "preset_image",
         dataUrl,
+        width,
+        height,
       };
       showSelectedImage(selectedImage);
+      updateKeepOriginalAspectState();
     }
   } catch {}
 
@@ -625,6 +799,7 @@ function makePresetFromCurrentState() {
     fields: {
       systemPrompt: els.systemPrompt.value,
       prompt: els.prompt.value,
+      keepOriginalAspect: isKeepOriginalAspectEnabled(),
       aspectRatio: els.aspectRatio.value,
       imageSize: els.imageSize.value,
       temperature: els.temperature.value,
@@ -641,7 +816,7 @@ function makePresetFromCurrentState() {
   return preset;
 }
 
-function applyPreset(preset) {
+async function applyPreset(preset) {
   // DO NOT touch host/key (as required)
   // Mode
   setMode(preset.mode === "json" ? "json" : "form");
@@ -650,6 +825,7 @@ function applyPreset(preset) {
   const f = preset.fields || {};
   els.systemPrompt.value = f.systemPrompt ?? "";
   els.prompt.value = f.prompt ?? "";
+  els.keepOriginalAspect.checked = !!f.keepOriginalAspect;
   els.aspectRatio.value = f.aspectRatio ?? "";
   els.imageSize.value = f.imageSize ?? "";
   els.temperature.value = f.temperature ?? "";
@@ -669,16 +845,25 @@ function applyPreset(preset) {
     const inputBlob = new Blob([blob], { type: mimeType });
     const dataUrl = URL.createObjectURL(inputBlob);
 
+    let width = null;
+    let height = null;
+    try {
+      ({ width, height } = await loadImageDimensions(dataUrl));
+    } catch {}
+
     selectedImage = {
       mimeType,
       base64,
       size: preset.image.size || inputBlob.size,
       name: preset.image.name || "preset_image",
       dataUrl,
+      width,
+      height,
     };
     showSelectedImage(selectedImage);
   }
 
+  updateKeepOriginalAspectState();
   persistBase();
   setStatus(`已应用预设：${preset.name}\n（Host / Key 未改变）`, true);
   setTimeout(() => setStatus("", false), 1400);
@@ -839,6 +1024,7 @@ async function importPresetsFromFile(file) {
       fields: {
         systemPrompt: p?.fields?.systemPrompt ?? "",
         prompt: p?.fields?.prompt ?? "",
+        keepOriginalAspect: !!p?.fields?.keepOriginalAspect,
         aspectRatio: p?.fields?.aspectRatio ?? "",
         imageSize: p?.fields?.imageSize ?? "",
         temperature: p?.fields?.temperature ?? "",
@@ -932,7 +1118,7 @@ async function run() {
         }
 
         setStatus("", false);
-        renderResult({ data, ms });
+        await renderResult({ data, ms });
         return;
       } catch (e) {
         // 仅在“后台期间发生 + 网络类错误 + 未重试过”的情况下自动重试一次
@@ -963,6 +1149,7 @@ async function run() {
 function resetNonFixedFields() {
   els.systemPrompt.value = "";
   els.prompt.value = "";
+  els.keepOriginalAspect.checked = false;
   els.aspectRatio.value = "";
   els.imageSize.value = "";
   els.temperature.value = "";
@@ -973,6 +1160,7 @@ function resetNonFixedFields() {
   setStatus("", false);
   els.result.classList.add("hidden");
   els.resultEmpty.classList.remove("hidden");
+  updateKeepOriginalAspectState();
   persistBase();
 }
 
@@ -988,6 +1176,7 @@ async function handleImageFile(file) {
   const info = await readImageFile(file);
   selectedImage = info;
   showSelectedImage(info);
+  updateKeepOriginalAspectState();
 
   persistBase();
 }
@@ -1002,6 +1191,7 @@ function wireEvents() {
 
     els.systemPrompt.addEventListener(evt, persistBase);
     els.prompt.addEventListener(evt, persistBase);
+    els.keepOriginalAspect.addEventListener(evt, persistBase);
     els.aspectRatio.addEventListener(evt, persistBase);
     els.imageSize.addEventListener(evt, persistBase);
     els.temperature.addEventListener(evt, persistBase);
@@ -1020,6 +1210,11 @@ function wireEvents() {
 
   els.apiKey.addEventListener("input", () => {
     if (els.rememberKey.checked) localStorage.setItem(storageKeys.apiKey, els.apiKey.value);
+  });
+
+  els.keepOriginalAspect.addEventListener("change", () => {
+    updateKeepOriginalAspectState();
+    persistBase();
   });
 
   // mode switch
@@ -1058,7 +1253,11 @@ function wireEvents() {
     await handleImageFile(f);
   });
 
-  els.clearImage.addEventListener("click", () => clearSelectedImage());
+  els.clearImage.addEventListener("click", () => {
+    clearSelectedImage();
+    updateKeepOriginalAspectState();
+    persistBase();
+  });
 
   // run
   els.form.addEventListener("submit", async (e) => {
@@ -1092,7 +1291,7 @@ function wireEvents() {
   });
 
   // presets
-  els.presetSelect.addEventListener("change", () => {
+  els.presetSelect.addEventListener("change", async () => {
     const name = els.presetSelect.value || "";
     if (!name) {
       localStorage.removeItem(storageKeys.activePreset);
@@ -1102,7 +1301,7 @@ function wireEvents() {
     localStorage.setItem(storageKeys.activePreset, name);
     const presets = loadPresets();
     const p = presets.find(x => x.name === name);
-    if (p) applyPreset(p);
+    if (p) await applyPreset(p);
     refreshPresetUI();
   });
 
@@ -1130,9 +1329,11 @@ function wireEvents() {
 }
 
 // ----- init -----
-function init() {
+async function init() {
   restoreBase();
   wireEvents();
+
+  updateKeepOriginalAspectState();
 
   // ensure mode is applied
   setMode(uiMode === "json" ? "json" : "form");
@@ -1143,7 +1344,7 @@ function init() {
   if (activeName) {
     const presets = loadPresets();
     const p = presets.find(x => x.name === activeName);
-    if (p) applyPreset(p);
+    if (p) await applyPreset(p);
   }
 }
 

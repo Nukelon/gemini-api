@@ -169,6 +169,13 @@ input:focus, select:focus, textarea:focus {
   user-select: none;
 }
 .checkbox input { transform: translateY(0.5px); }
+.checkbox.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.checkbox.disabled input {
+  cursor: not-allowed;
+}
 
 .modebar {
   margin: 14px 0 12px;

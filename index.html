@@ -122,6 +122,11 @@
                 <option value="16:9">16:9</option>
                 <option value="21:9">21:9</option>
               </select>
+              <label class="checkbox" title="上传图片后可用">
+                <input id="keepOriginalAspect" type="checkbox" disabled />
+                <span>保持原图比例（启用后禁用自定义 JSON）</span>
+              </label>
+              <span class="hint">勾选后会优先使用与输入图片一致的比例生成，自动黑边补足，再裁切为原图比例，同时禁用 JSON 模式。</span>
             </label>
 
             <label class="field">
