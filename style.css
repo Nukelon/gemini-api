@@ -1,400 +1,239 @@
-:root {
-  --bg: #0b0c10;
-  --card: #11131a;
-  --muted: #9aa3b2;
-  --text: #e9edf5;
-  --border: rgba(255,255,255,0.12);
-  --border2: rgba(255,255,255,0.08);
-  --shadow: 0 10px 30px rgba(0,0,0,0.35);
-  --radius: 16px;
-  --radius2: 12px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
-}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Gemini 3 Pro Image Preview API 调用器</title>
+  <meta name="description" content="基于 GitHub Pages 的 gemini-3-pro-image-preview 图像生成/编辑 API 调用器" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
 
-* { box-sizing: border-box; }
-html, body { height: 100%; }
-body {
-  margin: 0;
-  background: radial-gradient(1000px 600px at 20% -10%, rgba(100, 120, 255, 0.18), transparent 55%),
-              radial-gradient(900px 600px at 90% 10%, rgba(0, 180, 140, 0.12), transparent 55%),
-              var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+<body>
+  <header class="header">
+    <div class="container">
+      <div class="title-row">
+        <div class="title-left">
+          <h1 class="title">Gemini 3 Pro Image Preview API 调用器</h1>
+          <p class="subtitle">
+            支持：Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP / 预设 / JSON 请求体 / 保持原图比例裁切（有图才生效）
+          </p>
+        </div>
 
-.container {
-  width: min(1100px, calc(100% - 24px));
-  margin: 0 auto;
-}
+        <div class="presetbar" aria-label="预设工具栏">
+          <select id="presetSelect" class="presetSelect" title="选择预设">
+            <option value="">（无预设）</option>
+          </select>
+          <button id="presetSave" type="button" class="btn secondary">保存为预设</button>
+          <button id="presetUpdate" type="button" class="btn secondary" disabled>更新预设</button>
+          <button id="presetDelete" type="button" class="btn secondary" disabled>删除预设</button>
+          <button id="presetExport" type="button" class="btn secondary">导出</button>
 
-.header {
-  padding: 22px 0 16px;
-  border-bottom: 1px solid var(--border2);
-  backdrop-filter: blur(10px);
-}
+          <label class="btn secondary filebtn" title="导入预设（JSON）">
+            导入
+            <input id="presetImport" type="file" accept="application/json" />
+          </label>
+        </div>
+      </div>
+    </div>
+  </header>
 
-.title-row {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-}
+  <main class="container">
+    <section class="card">
+      <h2 class="section-title">配置</h2>
 
-.title-left {
-  display: grid;
-  gap: 8px;
-  min-width: min(620px, 100%);
-}
+      <form id="form" autocomplete="off">
+        <div class="grid">
+          <label class="field">
+            <span class="label">API 主机地址（可选）</span>
+            <input id="apiHost" type="text" inputmode="url" placeholder="留空则使用 Google 官方主机" />
+            <span class="hint">可填入你的反代/网关域名；留空默认官方。</span>
+          </label>
 
-.title {
-  margin: 0;
-  font-size: 20px;
-  letter-spacing: 0.2px;
-}
+          <label class="field">
+            <span class="label">API Key</span>
+            <input id="apiKey" type="password" placeholder="粘贴你的 Gemini API Key" />
+            <div class="row">
+              <label class="checkbox">
+                <input id="rememberKey" type="checkbox" />
+                <span>在本机保存 Key（localStorage）</span>
+              </label>
+              <label class="checkbox">
+                <input id="useHeaderKey" type="checkbox" />
+                <span>把 Key 放到 Header（x-goog-api-key）</span>
+              </label>
+            </div>
+            <span class="hint">安全建议：对 Key 做来源域名限制。GitHub Pages 为纯前端，无法真正隐藏 Key。</span>
+          </label>
+        </div>
 
-.subtitle {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.5;
-  font-size: 13px;
-}
+        <div class="modebar" role="tablist" aria-label="请求体编辑模式">
+          <button id="modeForm" type="button" class="seg active" role="tab" aria-selected="true">表单模式</button>
+          <button id="modeJson" type="button" class="seg" role="tab" aria-selected="false">JSON 模式</button>
+        </div>
 
-.presetbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  max-width: 100%;
-}
+        <div id="formModeWrap">
+          <div class="grid">
+            <label class="field full">
+              <span class="label">系统提示词（可选）</span>
+              <textarea id="systemPrompt" rows="3" placeholder="例如：你是一个专业平面设计师，输出图片需要干净背景、柔光、高清。"></textarea>
+            </label>
 
-.presetSelect {
-  min-width: 220px;
-  padding: 10px 12px;
-  background: rgba(0,0,0,0.25);
-  color: var(--text);
-  border: 1px solid var(--border2);
-  border-radius: 999px;
-  outline: none;
-  font-size: 13px;
-}
+            <label class="field full">
+              <span class="label">提示词（必填）</span>
+              <textarea id="prompt" rows="5" placeholder="例如：生成一张极简风的咖啡品牌海报，包含清晰可读的标题文字“MOONBEAN”，风格高级。"></textarea>
+            </label>
 
-.filebtn {
-  position: relative;
-  overflow: hidden;
-}
-.filebtn input[type="file"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
+            <div class="field full">
+              <span class="label">输入图片（可选，用于图像编辑/参考）</span>
+              <div id="dropZone" class="dropzone" role="button" tabindex="0">
+                <div class="dz-main">
+                  <strong>拖拽图片到这里</strong>
+                  <span>或点击选择文件（PNG/JPEG/WebP/HEIC 等）</span>
+                </div>
+                <input id="imageFile" type="file" accept="image/*" />
+              </div>
 
-.card {
-  margin: 18px 0;
-  background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 40%),
-              var(--card);
-  border: 1px solid var(--border2);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 18px;
-}
+              <div id="imagePreview" class="preview hidden">
+                <img id="imagePreviewImg" alt="输入图片预览" />
+                <div class="preview-meta">
+                  <div id="imageMeta"></div>
+                  <button id="clearImage" type="button" class="btn secondary">移除图片</button>
+                </div>
+              </div>
 
-.section-title {
-  margin: 0 0 14px;
-  font-size: 16px;
-  letter-spacing: 0.2px;
-}
+              <span class="hint">上传图片后，可在提示词中写“保持主体不变的情况下……”等进行编辑或参考生成。</span>
+            </div>
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
+            <label class="field">
+              <span class="label">生成图片比例（可选）</span>
+              <select id="aspectRatio">
+                <option value="">默认（模型自行选择）</option>
+                <option value="1:1">1:1</option>
+                <option value="2:3">2:3</option>
+                <option value="3:2">3:2</option>
+                <option value="3:4">3:4</option>
+                <option value="4:3">4:3</option>
+                <option value="4:5">4:5</option>
+                <option value="5:4">5:4</option>
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+                <option value="21:9">21:9</option>
+              </select>
+              <span class="hint">当“保持原图比例”在“已上传图片”状态下生效时，此项将被锁定（自动选择最接近原图的比例）。</span>
+            </label>
 
-.field { display: grid; gap: 8px; }
-.field.full { grid-column: 1 / -1; }
+            <!-- 新位置：放在比例下面 -->
+            <div class="field">
+              <span class="label">保持原图比例（仅在上传图片后生效）</span>
+              <label class="checkbox">
+                <input id="keepOriginalAspect" type="checkbox" />
+                <span>启用后：锁定比例为“最接近原图”，网页端裁切回原图比例，并提供查看原始输出；同时禁用 JSON 模式</span>
+              </label>
+              <span class="hint">未上传图片时：该选项不会生效（不会自动取消，也不会置灰）。</span>
+            </div>
 
-.label {
-  font-size: 13px;
-  color: rgba(233, 237, 245, 0.92);
-}
+            <label class="field">
+              <span class="label">分辨率（可选）</span>
+              <select id="imageSize">
+                <option value="">默认（1K）</option>
+                <option value="1K">1K</option>
+                <option value="2K">2K</option>
+                <option value="4K">4K</option>
+              </select>
+              <span class="hint">4K 成本更高、延迟更大。</span>
+            </label>
 
-.hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.4;
-}
+            <label class="field">
+              <span class="label">Temperature（可选，0–2）</span>
+              <input id="temperature" type="number" inputmode="decimal" min="0" max="2" step="0.1" placeholder="留空使用模型默认" />
+            </label>
 
-input[type="text"],
-input[type="password"],
-input[type="number"],
-select,
-textarea {
-  width: 100%;
-  padding: 11px 12px;
-  background: rgba(0,0,0,0.25);
-  color: var(--text);
-  border: 1px solid var(--border2);
-  border-radius: var(--radius2);
-  outline: none;
-  font-size: 14px;
-}
+            <label class="field">
+              <span class="label">TopP（可选，0–1）</span>
+              <input id="topP" type="number" inputmode="decimal" min="0" max="1" step="0.05" placeholder="留空使用模型默认" />
+            </label>
+          </div>
+        </div>
 
-textarea { resize: vertical; }
+        <div id="jsonModeWrap" class="hidden">
+          <div class="jsonbar">
+            <button id="jsonFormat" type="button" class="btn secondary">格式化 JSON</button>
+            <button id="jsonFromForm" type="button" class="btn secondary">从表单同步</button>
+            <button id="jsonToForm" type="button" class="btn secondary">回填到表单</button>
+          </div>
 
-input:focus, select:focus, textarea:focus {
-  border-color: rgba(140, 160, 255, 0.45);
-  box-shadow: 0 0 0 3px rgba(140, 160, 255, 0.12);
-}
+          <label class="field full">
+            <span class="label">请求体 JSON（将直接作为 POST body 发送）</span>
+            <textarea id="requestBodyJson" rows="16" spellcheck="false"
+              placeholder='例如：{"contents":[{"role":"user","parts":[{"text":"..."}]}],"generationConfig":{"responseModalities":["Image"]}}'></textarea>
+            <span class="hint">提示：Host / Key 不在此 JSON 中；仍由上方固定配置决定。</span>
+          </label>
+        </div>
 
-.row {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  flex-wrap: wrap;
-}
+        <div class="actions">
+          <button id="runBtn" class="btn primary" type="submit">调用 API 生成</button>
+          <button id="resetBtn" class="btn secondary" type="button">重置（不清 Host/Key）</button>
+        </div>
 
-.checkbox {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 13px;
-  user-select: none;
-}
-.checkbox input { transform: translateY(0.5px); }
-.checkbox input:disabled + span { opacity: 0.55; }
+        <div>
+          <div id="status" class="status hidden"></div>
+        </div>
+      </form>
+    </section>
 
-.modebar {
-  margin: 14px 0 12px;
-  display: inline-flex;
-  border: 1px solid var(--border2);
-  border-radius: 999px;
-  background: rgba(0,0,0,0.18);
-  overflow: hidden;
-}
+    <section class="card">
+      <h2 class="section-title">结果</h2>
 
-.seg {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  padding: 10px 14px;
-  cursor: pointer;
-  font-size: 13px;
-}
-.seg.active {
-  color: var(--text);
-  background: rgba(140, 160, 255, 0.14);
-}
-.seg:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
+      <div id="resultEmpty" class="empty">
+        尚未生成。提交后会在这里显示图片与返回文本。
+      </div>
 
-.jsonbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin: 4px 0 10px;
-}
+      <div id="result" class="hidden">
+        <div class="result-head">
+          <div>
+            <div class="kpi">
+              <span class="kpi-label">模型</span>
+              <span class="kpi-value" id="modelName"></span>
+            </div>
+            <div class="kpi">
+              <span class="kpi-label">耗时</span>
+              <span class="kpi-value" id="latency"></span>
+            </div>
+          </div>
 
-.dropzone {
-  position: relative;
-  border: 1px dashed rgba(255,255,255,0.2);
-  border-radius: var(--radius2);
-  padding: 14px;
-  background: rgba(0,0,0,0.20);
-  cursor: pointer;
-  overflow: hidden;
-}
+          <div class="result-actions">
+            <button id="copyCurl" type="button" class="btn secondary">复制 cURL</button>
+            <button id="copyJson" type="button" class="btn secondary">复制请求 JSON</button>
+          </div>
+        </div>
 
-.dropzone:focus {
-  outline: none;
-  border-color: rgba(140, 160, 255, 0.45);
-  box-shadow: 0 0 0 3px rgba(140, 160, 255, 0.12);
-}
+        <div id="textOutWrap" class="block hidden">
+          <h3 class="block-title">文本输出</h3>
+          <pre id="textOut" class="pre"></pre>
+        </div>
 
-.dropzone .dz-main {
-  display: grid;
-  gap: 4px;
-  color: var(--muted);
-}
+        <div id="imagesOutWrap" class="block hidden">
+          <h3 class="block-title">图片输出</h3>
+          <div id="imagesOut" class="gallery"></div>
+          <p class="hint">
+            iOS Safari 如遇“下载”不生效，请点击“打开”后长按图片保存到相册。
+          </p>
+        </div>
 
-.dropzone strong { color: var(--text); font-size: 13px; }
-.dropzone span { font-size: 12px; }
+        <details class="details">
+          <summary>查看原始响应 JSON</summary>
+          <pre id="rawJson" class="pre"></pre>
+        </details>
+      </div>
+    </section>
 
-.dropzone input[type="file"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
+    <footer class="footer">
+      <p class="footnote">
+        说明：本页面仅做前端调用封装。建议对 API Key 做来源域名限制，或使用自建反代/Worker 将 Key 置于服务端。
+      </p>
+    </footer>
+  </main>
 
-.preview {
-  margin-top: 10px;
-  display: grid;
-  grid-template-columns: 120px 1fr;
-  gap: 12px;
-  align-items: start;
-  padding: 12px;
-  border: 1px solid var(--border2);
-  border-radius: var(--radius2);
-  background: rgba(0,0,0,0.18);
-}
-
-.preview img {
-  width: 120px;
-  height: 120px;
-  object-fit: cover;
-  border-radius: 10px;
-  border: 1px solid var(--border2);
-}
-
-.preview-meta { display: grid; gap: 10px; }
-
-.actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
-
-.btn {
-  border: 1px solid var(--border2);
-  border-radius: 999px;
-  padding: 10px 14px;
-  font-size: 13px;
-  color: var(--text);
-  background: rgba(255,255,255,0.04);
-  cursor: pointer;
-  user-select: none;
-}
-
-.btn.primary {
-  border-color: rgba(140, 160, 255, 0.35);
-  background: rgba(140, 160, 255, 0.12);
-}
-
-.btn:disabled { opacity: 0.55; cursor: not-allowed; }
-
-.btn.secondary:hover,
-.btn.primary:hover { filter: brightness(1.1); }
-
-.status {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius2);
-  border: 1px solid var(--border2);
-  background: rgba(0,0,0,0.22);
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-.empty { color: var(--muted); font-size: 13px; padding: 10px 0 2px; }
-
-.result-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border2);
-}
-
-.kpi { display: flex; gap: 10px; align-items: baseline; margin: 4px 0; }
-.kpi-label { color: var(--muted); font-size: 12px; }
-.kpi-value { font-size: 13px; }
-
-.result-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-
-.block { margin-top: 14px; }
-.block-title { margin: 0 0 8px; font-size: 13px; color: rgba(233, 237, 245, 0.92); }
-
-.pre {
-  margin: 0;
-  padding: 12px;
-  border-radius: var(--radius2);
-  border: 1px solid var(--border2);
-  background: rgba(0,0,0,0.28);
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.55;
-  overflow: auto;
-}
-
-.gallery {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.imgcard {
-  border: 1px solid var(--border2);
-  background: rgba(0,0,0,0.18);
-  border-radius: var(--radius2);
-  overflow: hidden;
-  display: grid;
-}
-
-.imgcard img { width: 100%; height: auto; display: block; }
-
-.imgcard .bar {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-}
-
-.imgcard .barTop {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.imgcard .barBottom {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  border-top: 1px solid rgba(255,255,255,0.06);
-  padding-top: 8px;
-}
-
-.link {
-  color: rgba(160, 190, 255, 0.95);
-  text-decoration: none;
-  font-size: 13px;
-}
-.link:hover { text-decoration: underline; }
-
-.smallMuted { color: rgba(233,237,245,0.72); font-size: 12px; }
-
-.details { margin-top: 14px; border-top: 1px solid var(--border2); padding-top: 12px; }
-.details summary { cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
-
-.footer { padding: 10px 0 24px; color: var(--muted); }
-.footnote { margin: 0; font-size: 12px; line-height: 1.5; }
-
-.hidden { display: none !important; }
-
-@media (max-width: 860px) {
-  .grid { grid-template-columns: 1fr; }
-  .preview { grid-template-columns: 96px 1fr; }
-  .preview img { width: 96px; height: 96px; }
-  .gallery { grid-template-columns: 1fr; }
-  .presetSelect { min-width: 180px; }
-}
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
