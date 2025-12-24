@@ -1,4 +1,3 @@
-/* 保持你上一版 style.css 的内容不变；以下为新增/替换相关片段 */
 :root {
   --bg: #0b0c10;
   --card: #11131a;
@@ -13,7 +12,16 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: radial-gradient(1000px 600px at 20% -10%, rgba(100, 120, 255, 0.18), transparent 55%),
+              radial-gradient(900px 600px at 90% 10%, rgba(0, 180, 140, 0.12), transparent 55%),
+              var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
 .container { width: min(1100px, calc(100% - 24px)); margin: 0 auto; }
 
 .header { padding: 22px 0 16px; border-bottom: 1px solid var(--border2); backdrop-filter: blur(10px); }
@@ -22,9 +30,23 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--
 .title { margin: 0; font-size: 20px; letter-spacing: 0.2px; }
 .subtitle { margin: 0; color: var(--muted); line-height: 1.5; font-size: 13px; }
 
+.presetbar { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; max-width: 100%; }
+.presetSelect {
+  min-width: 220px;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.25);
+  color: var(--text);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  outline: none;
+  font-size: 13px;
+}
+.filebtn { position: relative; overflow: hidden; }
+.filebtn input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
 .card {
   margin: 18px 0;
-  background: var(--card);
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 40%), var(--card);
   border: 1px solid var(--border2);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -40,7 +62,14 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--
 .label { font-size: 13px; color: rgba(233, 237, 245, 0.92); }
 .hint { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.4; }
 
-input, select, textarea {
+/* FIX: 只对文本类 input 生效，避免影响 checkbox */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="url"],
+input[type="email"],
+select,
+textarea {
   width: 100%;
   padding: 11px 12px;
   background: rgba(0,0,0,0.25);
@@ -50,19 +79,25 @@ input, select, textarea {
   outline: none;
   font-size: 14px;
 }
+
 textarea { resize: vertical; }
 
-.row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-.checkbox { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; user-select: none; }
-
-.presetbar { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; max-width: 100%; }
-.presetSelect {
-  min-width: 220px; padding: 10px 12px;
-  background: rgba(0,0,0,0.25); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 999px; outline: none; font-size: 13px;
+input[type="checkbox"] {
+  width: auto;
+  padding: 0;
 }
-.filebtn { position: relative; overflow: hidden; }
-.filebtn input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  user-select: none;
+}
+.checkbox input { transform: translateY(0.5px); }
 
 .modebar {
   margin: 14px 0 12px;
@@ -101,11 +136,8 @@ textarea { resize: vertical; }
   background: rgba(0,0,0,0.18);
 }
 .preview-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-.thumbs {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
-}
+
+.thumbs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
 .thumb {
   border: 1px solid var(--border2);
   border-radius: 10px;
@@ -114,11 +146,7 @@ textarea { resize: vertical; }
   display: grid;
 }
 .thumb img { width: 100%; height: 76px; object-fit: cover; display: block; }
-.thumb .tbar {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 8px 8px;
-  gap: 8px;
-}
+.thumb .tbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 8px; gap: 8px; }
 .thumb .tname { color: rgba(233,237,245,0.85); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thumb .tbtn {
   border: 1px solid var(--border2);
@@ -131,6 +159,7 @@ textarea { resize: vertical; }
 }
 
 .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+
 .btn {
   border: 1px solid var(--border2);
   border-radius: 999px;
@@ -155,6 +184,7 @@ textarea { resize: vertical; }
   line-height: 1.5;
   white-space: pre-wrap;
 }
+
 .empty { color: var(--muted); font-size: 13px; padding: 10px 0 2px; }
 
 .result-head {
