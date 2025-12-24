@@ -15,7 +15,7 @@
         <div class="title-left">
           <h1 class="title">Gemini 3 Pro Image Preview API 调用器</h1>
           <p class="subtitle">
-            支持：Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP / 预设 / JSON 请求体
+            支持：Host / API Key / 系统提示词 / 提示词（可空）/ 多图输入（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP / 预设 / JSON 请求体
           </p>
         </div>
 
@@ -42,12 +42,11 @@
       <h2 class="section-title">配置</h2>
 
       <form id="form" autocomplete="off">
-        <!-- Host / Key 区：不随预设变化 -->
         <div class="grid">
           <label class="field">
             <span class="label">API 主机地址（可选）</span>
             <input id="apiHost" type="text" inputmode="url" placeholder="留空则使用 Google 官方主机" />
-            <span class="hint">可填入你的反代/网关域名；留空默认官方。</span>
+            <span class="hint">该项不随预设变化。</span>
           </label>
 
           <label class="field">
@@ -63,17 +62,16 @@
                 <span>把 Key 放到 Header（x-goog-api-key）</span>
               </label>
             </div>
-            <span class="hint">安全建议：对 Key 做来源域名限制。GitHub Pages 为纯前端，无法真正隐藏 Key。</span>
+            <span class="hint">该项不随预设变化。建议对 Key 做来源域名限制。</span>
           </label>
         </div>
 
-        <!-- 模式切换 -->
         <div class="modebar" role="tablist" aria-label="请求体编辑模式">
           <button id="modeForm" type="button" class="seg active" role="tab" aria-selected="true">表单模式</button>
           <button id="modeJson" type="button" class="seg" role="tab" aria-selected="false">JSON 模式</button>
         </div>
 
-        <!-- 表单模式区域 -->
+        <!-- 表单模式 -->
         <div id="formModeWrap">
           <div class="grid">
             <label class="field full">
@@ -82,29 +80,30 @@
             </label>
 
             <label class="field full">
-              <span class="label">提示词（必填）</span>
-              <textarea id="prompt" rows="5" placeholder="例如：生成一张极简风的咖啡品牌海报，包含清晰可读的标题文字“MOONBEAN”，风格高级。"></textarea>
+              <span class="label">提示词（可选）</span>
+              <textarea id="prompt" rows="5" placeholder="不填也可以；会传空文本。"></textarea>
+              <span class="hint">如果不填提示词，将传入空文本 part（{"text":""}）。</span>
             </label>
 
             <div class="field full">
-              <span class="label">输入图片（可选，用于图像编辑/参考）</span>
+              <span class="label">输入图片（可选，多张，用于图像编辑/参考）</span>
               <div id="dropZone" class="dropzone" role="button" tabindex="0">
                 <div class="dz-main">
-                  <strong>拖拽图片到这里</strong>
-                  <span>或点击选择文件（PNG/JPEG/WebP/HEIC 等）</span>
+                  <strong>拖拽多张图片到这里</strong>
+                  <span>或点击选择文件（支持多选）</span>
                 </div>
-                <input id="imageFile" type="file" accept="image/*" />
+                <input id="imageFile" type="file" accept="image/*" multiple />
               </div>
 
               <div id="imagePreview" class="preview hidden">
-                <img id="imagePreviewImg" alt="输入图片预览" />
-                <div class="preview-meta">
+                <div class="preview-head">
                   <div id="imageMeta"></div>
-                  <button id="clearImage" type="button" class="btn secondary">移除图片</button>
+                  <button id="clearImages" type="button" class="btn secondary">清空图片</button>
                 </div>
+                <div id="imagePreviewList" class="thumbs"></div>
               </div>
 
-              <span class="hint">上传图片后，可在提示词中写“把这张图改成…… / 在保持主体不变的情况下……”</span>
+              <span class="hint">预设不会保存图片；应用预设时不会改动当前已上传图片。</span>
             </div>
 
             <label class="field">
@@ -132,7 +131,6 @@
                 <option value="2K">2K</option>
                 <option value="4K">4K</option>
               </select>
-              <span class="hint">4K 成本更高、延迟更大。</span>
             </label>
 
             <label class="field">
@@ -147,7 +145,7 @@
           </div>
         </div>
 
-        <!-- JSON 模式区域 -->
+        <!-- JSON 模式 -->
         <div id="jsonModeWrap" class="hidden">
           <div class="jsonbar">
             <button id="jsonFormat" type="button" class="btn secondary">格式化 JSON</button>
@@ -158,8 +156,8 @@
           <label class="field full">
             <span class="label">请求体 JSON（将直接作为 POST body 发送）</span>
             <textarea id="requestBodyJson" rows="16" spellcheck="false"
-              placeholder='例如：{"contents":[{"role":"user","parts":[{"text":"..." }]}],"generationConfig":{"responseModalities":["Image"]}}'></textarea>
-            <span class="hint">提示：Host / Key 不在此 JSON 中；仍由上方固定配置决定。</span>
+              placeholder='例如：{"contents":[{"role":"user","parts":[{"text":""}]}],"generationConfig":{"responseModalities":["Image"]}}'></textarea>
+            <span class="hint">不建议在本地持久化超大 JSON；本页面不会把大 JSON 存入 localStorage。</span>
           </label>
         </div>
 
@@ -222,7 +220,7 @@
 
     <footer class="footer">
       <p class="footnote">
-        说明：本页面仅做前端调用封装。建议对 API Key 做来源域名限制，或使用自建反代/Worker 将 Key 置于服务端。
+        说明：本页面仅做前端调用封装。预设不保存图片；图片仅保存在当前页面内存中。
       </p>
     </footer>
   </main>
