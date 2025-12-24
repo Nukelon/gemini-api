@@ -41,7 +41,7 @@
     <section class="card">
       <h2 class="section-title">配置</h2>
 
-      <form id="form" autocomplete="off">
+      <form id="form" autocomplete="off" novalidate>
         <!-- Host / Key 区：不随预设变化 -->
         <div class="grid">
           <label class="field">
@@ -84,12 +84,12 @@
             <label class="field full">
               <span class="label">提示词（可选，可留空）</span>
               <textarea id="prompt" rows="5" placeholder="例如：生成一张极简风的咖啡品牌海报……（可留空，仅用图片/系统提示也可）"></textarea>
-              <span class="hint">如果留空，会传入一个空文本 part（{\"text\":\"\"}）。</span>
+              <span class="hint">如果留空，会传入一个空文本 part（{"text":""}）。</span>
             </label>
 
             <div class="field full">
               <span class="label">输入图片（可选，支持多张，用于图像编辑/参考）</span>
-              <div id="dropZone" class="dropzone" role="button" tabindex="0">
+              <div id="dropZone" class="dropzone" role="button" tabindex="0" aria-label="选择或拖拽图片">
                 <div class="dz-main">
                   <strong>拖拽图片到这里</strong>
                   <span>或点击选择文件（可多选，PNG/JPEG/WebP/HEIC 等）</span>
@@ -228,6 +228,7 @@
     </footer>
   </main>
 
-  <script type="module" src="./app.js"></script>
+  <!-- 兼容性：使用非 module 脚本，避免旧 Safari 的 module 解析差异 -->
+  <script src="./app.js"></script>
 </body>
 </html>
