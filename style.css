@@ -83,16 +83,8 @@ body {
   font-size: 13px;
 }
 
-.filebtn {
-  position: relative;
-  overflow: hidden;
-}
-.filebtn input[type="file"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
+.filebtn { position: relative; overflow: hidden; }
+.filebtn input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
 .card {
   margin: 18px 0;
@@ -169,7 +161,6 @@ input:focus, select:focus, textarea:focus {
   user-select: none;
 }
 .checkbox input { transform: translateY(0.5px); }
-.checkbox input:disabled + span { opacity: 0.55; }
 
 .modebar {
   margin: 14px 0 12px;
@@ -188,14 +179,8 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
   font-size: 13px;
 }
-.seg.active {
-  color: var(--text);
-  background: rgba(140, 160, 255, 0.14);
-}
-.seg:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
+.seg.active { color: var(--text); background: rgba(140, 160, 255, 0.14); }
+.seg:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .jsonbar {
   display: flex;
@@ -221,21 +206,11 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(140, 160, 255, 0.12);
 }
 
-.dropzone .dz-main {
-  display: grid;
-  gap: 4px;
-  color: var(--muted);
-}
-
+.dropzone .dz-main { display: grid; gap: 4px; color: var(--muted); }
 .dropzone strong { color: var(--text); font-size: 13px; }
 .dropzone span { font-size: 12px; }
 
-.dropzone input[type="file"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
+.dropzone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
 .preview {
   margin-top: 10px;
@@ -284,9 +259,6 @@ input:focus, select:focus, textarea:focus {
 }
 
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-
-.btn.secondary:hover,
-.btn.primary:hover { filter: brightness(1.1); }
 
 .status {
   margin-top: 10px;
@@ -350,11 +322,7 @@ input:focus, select:focus, textarea:focus {
 
 .imgcard img { width: 100%; height: auto; display: block; }
 
-.imgcard .bar {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-}
+.imgcard .bar { display: grid; gap: 8px; padding: 10px; }
 
 .imgcard .barTop {
   display: flex;
