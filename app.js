@@ -34,6 +34,19 @@
     return btoa(binary);
   }
 
+  function parseBase64FromDataUrl(dataUrl) {
+    // data:[mime];base64,xxxxx
+    var comma = dataUrl.indexOf(",");
+    if (comma < 0) return "";
+    return dataUrl.slice(comma + 1);
+  }
+
+  function parseMimeFromDataUrl(dataUrl) {
+    // data:image/png;base64,....
+    var m = /^data:([^;]+);base64,/.exec(dataUrl);
+    return m && m[1] ? m[1] : "application/octet-stream";
+  }
+
   function nowISO() { return (new Date()).toISOString(); }
 
   function isLikelyNetworkError(err) {
@@ -53,12 +66,10 @@
   }
 
   function copyTextToClipboard(text) {
-    // Prefer modern clipboard
     if (navigator.clipboard && navigator.clipboard.writeText) {
       return navigator.clipboard.writeText(text);
     }
 
-    // Fallback
     return new Promise(function (resolve, reject) {
       try {
         var ta = document.createElement("textarea");
@@ -135,7 +146,6 @@
     rawJson: $("rawJson")
   };
 
-  // Guard: if essential elements missing, fail fast with user-visible info
   if (!els.form || !els.runBtn) {
     alert("页面元素未找到：请确认 index.html 与 app.js 为同一版本，且已放在同一目录。");
     return;
@@ -161,8 +171,8 @@
     activePreset: "g3_active_preset_name"
   };
 
-  var uiMode = "form"; // form | json
-  var selectedImages = []; // {mimeType,size,name,base64,dataUrl}
+  var uiMode = "form";
+  var selectedImages = []; // {mimeType,size,name,base64,dataUrl,previewKind}
   var lastRequest = null;
   var objectUrls = [];
 
@@ -198,23 +208,108 @@
     wakeLock = null;
   }
 
+  function revokeInputPreview(url, kind) {
+    // Only revoke blob: URLs
+    try {
+      if (kind === "blob" && url) URL.revokeObjectURL(url);
+    } catch (_) {}
+  }
+
   function readImageFile(file) {
-    return file.arrayBuffer().then(function (buf) {
-      var mimeType = file.type || "application/octet-stream";
-      var size = file.size;
-      var name = file.name || "image";
-      var base64 = base64FromArrayBuffer(buf);
-      var dataUrl = URL.createObjectURL(file);
-      return { mimeType: mimeType, size: size, name: name, base64: base64, dataUrl: dataUrl };
+    // Return: { mimeType, size, name, base64, dataUrl, previewKind }
+    var mimeType0 = file && file.type ? file.type : "application/octet-stream";
+    var size0 = file && file.size ? file.size : 0;
+    var name0 = file && file.name ? file.name : "image";
+
+    // Prefer object URL for preview if possible
+    var previewUrl = "";
+    var previewKind = "";
+
+    try {
+      if (URL && URL.createObjectURL) {
+        previewUrl = URL.createObjectURL(file);
+        previewKind = "blob";
+      }
+    } catch (_) {
+      previewUrl = "";
+      previewKind = "";
+    }
+
+    // 1) Try arrayBuffer (modern)
+    if (file && typeof file.arrayBuffer === "function") {
+      return file.arrayBuffer().then(function (buf) {
+        var base64 = base64FromArrayBuffer(buf);
+        return {
+          mimeType: mimeType0,
+          size: size0,
+          name: name0,
+          base64: base64,
+          dataUrl: previewUrl,
+          previewKind: previewKind
+        };
+      }).catch(function () {
+        // fallthrough to FileReader
+        return readImageFileByFileReader(file, mimeType0, size0, name0, previewUrl, previewKind);
+      });
+    }
+
+    // 2) Fallback
+    return readImageFileByFileReader(file, mimeType0, size0, name0, previewUrl, previewKind);
+  }
+
+  function readImageFileByFileReader(file, mimeType0, size0, name0, previewUrl, previewKind) {
+    return new Promise(function (resolve, reject) {
+      try {
+        if (!window.FileReader) {
+          reject(new Error("当前浏览器不支持 FileReader，无法读取图片。"));
+          return;
+        }
+
+        var fr = new FileReader();
+        fr.onerror = function () {
+          reject(new Error("FileReader 读取失败"));
+        };
+        fr.onload = function () {
+          try {
+            var dataUrl = String(fr.result || "");
+            var base64 = parseBase64FromDataUrl(dataUrl);
+            var mimeType = mimeType0;
+            if (!mimeType || mimeType === "application/octet-stream") {
+              mimeType = parseMimeFromDataUrl(dataUrl) || mimeType0;
+            }
+
+            // If we failed to create a blob preview URL, use data URL as preview.
+            var outPreviewUrl = previewUrl;
+            var outPreviewKind = previewKind;
+            if (!outPreviewUrl) {
+              outPreviewUrl = dataUrl;
+              outPreviewKind = "data";
+            }
+
+            resolve({
+              mimeType: mimeType,
+              size: size0,
+              name: name0,
+              base64: base64,
+              dataUrl: outPreviewUrl,
+              previewKind: outPreviewKind
+            });
+          } catch (e) {
+            reject(e);
+          }
+        };
+
+        fr.readAsDataURL(file);
+      } catch (e) {
+        reject(e);
+      }
     });
   }
 
-  function revokeInputPreview(url) {
-    try { if (url) URL.revokeObjectURL(url); } catch (_) {}
-  }
-
   function clearAllImages() {
-    for (var i = 0; i < selectedImages.length; i++) revokeInputPreview(selectedImages[i].dataUrl);
+    for (var i = 0; i < selectedImages.length; i++) {
+      revokeInputPreview(selectedImages[i].dataUrl, selectedImages[i].previewKind);
+    }
     selectedImages = [];
     if (els.imageFile) els.imageFile.value = "";
     renderInputGallery();
@@ -223,7 +318,7 @@
   function removeImageAt(idx) {
     var img = selectedImages[idx];
     if (!img) return;
-    revokeInputPreview(img.dataUrl);
+    revokeInputPreview(img.dataUrl, img.previewKind);
     selectedImages.splice(idx, 1);
     renderInputGallery();
   }
@@ -279,29 +374,31 @@
     var files = Array.prototype.slice.call(fileList || []).filter(function (f) { return !!f; });
     if (!files.length) return Promise.resolve();
 
-    var tooBig = null;
-    for (var i = 0; i < files.length; i++) {
-      if (files[i].size > 12 * 1024 * 1024) { tooBig = files[i]; break; }
-    }
-
-    if (tooBig) {
-      setStatus("存在较大的图片（" + tooBig.name + "，" + humanBytes(tooBig.size) + "）。建议压缩后再试。", true);
-    } else {
-      setStatus("", false);
-    }
-
-    // sequential append for stability
+    // Sequential append for stability + better error attribution.
     var p = Promise.resolve();
-    files.forEach(function (f) {
+
+    files.forEach(function (f, idx) {
       p = p.then(function () {
+        setStatus("正在读取图片：" + (f.name || ("image_" + (idx + 1))) + " …", true);
+
         return readImageFile(f).then(function (info) {
+          if (!info || !info.base64) {
+            throw new Error("读取图片成功但未获得 base64 数据。");
+          }
           selectedImages.push(info);
+        }).catch(function (e) {
+          // Do not fail the whole batch; report per-file error.
+          setStatus("图片读取失败：" + (f.name || "(unknown)") + "\n原因：" + (e && e.message ? e.message : e) + "\n\n建议：若为 HEIC，可先在相册共享为 JPEG/PNG 再上传。", true);
         });
       });
     });
 
     return p.then(function () {
+      setStatus("", false);
       renderInputGallery();
+
+      // iOS 兼容：允许再次选择同一张图片
+      try { els.imageFile.value = ""; } catch (_) {}
     });
   }
 
@@ -332,6 +429,7 @@
     var temperature = safeNumberOrEmpty(els.temperature.value);
     var topP = safeNumberOrEmpty(els.topP.value);
 
+    // prompt may be empty: still send an empty text part
     var parts = [{ text: String(prompt) }];
 
     for (var i = 0; i < selectedImages.length; i++) {
@@ -621,14 +719,12 @@
     try { obj = JSON.parse(raw); }
     catch (e) { setStatus("JSON 解析失败：" + (e && e.message ? e.message : e), true); return; }
 
-    // system prompt
     try {
       if (obj.systemInstruction && obj.systemInstruction.parts && obj.systemInstruction.parts[0] && typeof obj.systemInstruction.parts[0].text === "string") {
         els.systemPrompt.value = obj.systemInstruction.parts[0].text;
       }
     } catch (_) {}
 
-    // prompt + images
     try {
       var parts = (obj.contents && obj.contents[0] && obj.contents[0].parts) ? obj.contents[0].parts : [];
       var text = null;
@@ -648,27 +744,23 @@
         var mimeType = inline.mime_type || inline.mimeType || "application/octet-stream";
         var base64 = inline.data;
 
-        // create preview from base64
+        // Preview via blob URL
         var r = b64ToBlobUrl(base64, mimeType);
-        // Avoid output cleanup mixing: do not keep this url; create dedicated input preview url
-        try { URL.revokeObjectURL(r.url); } catch (_) {}
-
-        var inputBlob = new Blob([r.blob], { type: mimeType });
-        var dataUrl = URL.createObjectURL(inputBlob);
+        var dataUrl = r.url;
 
         selectedImages.push({
           mimeType: mimeType,
           base64: base64,
-          size: inputBlob.size || base64.length,
+          size: r.blob && r.blob.size ? r.blob.size : base64.length,
           name: "json_image",
-          dataUrl: dataUrl
+          dataUrl: dataUrl,
+          previewKind: "blob"
         });
       });
 
       renderInputGallery();
     } catch (_) {}
 
-    // generation config
     try {
       var gc = obj.generationConfig || {};
       if (typeof gc.temperature === "number") els.temperature.value = String(gc.temperature);
@@ -1031,7 +1123,7 @@
     els.jsonFromForm.addEventListener("click", syncJsonFromForm);
     els.jsonToForm.addEventListener("click", applyJsonToFormBestEffort);
 
-    // Stronger file picker trigger (works even if overlay click behaves oddly on iOS)
+    // Stronger file picker trigger
     els.dropZone.addEventListener("click", function () {
       try { els.imageFile.click(); } catch (_) {}
     });
@@ -1048,12 +1140,12 @@
     function onDrag(e) {
       e.preventDefault();
       e.stopPropagation();
-      els.dropZone.style.borderColor = "rgba(140, 160, 255, 0.45)";
+      try { els.dropZone.style.borderColor = "rgba(140, 160, 255, 0.45)"; } catch (_) {}
     }
     function onLeave(e) {
       e.preventDefault();
       e.stopPropagation();
-      els.dropZone.style.borderColor = "rgba(255,255,255,0.2)";
+      try { els.dropZone.style.borderColor = "rgba(255,255,255,0.2)"; } catch (_) {}
     }
 
     els.dropZone.addEventListener("dragenter", onDrag);
@@ -1068,14 +1160,16 @@
     // File picker (append)
     els.imageFile.addEventListener("change", function () {
       var files = els.imageFile.files;
-      addImagesFromFiles(files).then(function () {
-        els.imageFile.value = ""; // allow re-pick
-      });
+      if (!files || !files.length) {
+        setStatus("未选择任何文件。", true);
+        setTimeout(function () { setStatus("", false); }, 800);
+        return;
+      }
+      addImagesFromFiles(files);
     });
 
     els.clearImage.addEventListener("click", clearAllImages);
 
-    // submit
     els.form.addEventListener("submit", function (e) {
       e.preventDefault();
       els.runBtn.disabled = true;
