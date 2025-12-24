@@ -15,7 +15,7 @@
         <div class="title-left">
           <h1 class="title">Gemini 3 Pro Image Preview API 调用器</h1>
           <p class="subtitle">
-            支持：Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP / 预设 / JSON 请求体 / 保持原图比例裁切（有图才生效）
+            Host / API Key / 系统提示词 / 提示词 / 输入图片（可选）/ 比例（可选）/ 分辨率（可选）/ temperature / topP / 预设 / JSON 请求体 / 原图比例裁切
           </p>
         </div>
 
@@ -62,7 +62,7 @@
                 <span>把 Key 放到 Header（x-goog-api-key）</span>
               </label>
             </div>
-            <span class="hint">安全建议：对 Key 做来源域名限制。GitHub Pages 为纯前端，无法真正隐藏 Key。</span>
+            <span class="hint">GitHub Pages 为纯前端，无法真正隐藏 Key。建议做域名限制或使用服务端代理。</span>
           </label>
         </div>
 
@@ -84,11 +84,11 @@
             </label>
 
             <div class="field full">
-              <span class="label">输入图片（可选，用于图像编辑/参考）</span>
+              <span class="label">输入图片（可选）</span>
               <div id="dropZone" class="dropzone" role="button" tabindex="0">
                 <div class="dz-main">
                   <strong>拖拽图片到这里</strong>
-                  <span>或点击选择文件（PNG/JPEG/WebP/HEIC 等）</span>
+                  <span>或点击选择文件</span>
                 </div>
                 <input id="imageFile" type="file" accept="image/*" />
               </div>
@@ -100,8 +100,6 @@
                   <button id="clearImage" type="button" class="btn secondary">移除图片</button>
                 </div>
               </div>
-
-              <span class="hint">上传图片后，可在提示词中写“保持主体不变的情况下……”等进行编辑或参考生成。</span>
             </div>
 
             <label class="field">
@@ -119,17 +117,14 @@
                 <option value="16:9">16:9</option>
                 <option value="21:9">21:9</option>
               </select>
-              <span class="hint">当“保持原图比例”在“已上传图片”状态下生效时，此项将被锁定（自动选择最接近原图的比例）。</span>
             </label>
 
-            <!-- 新位置：放在比例下面 -->
             <div class="field">
-              <span class="label">保持原图比例（仅在上传图片后生效）</span>
+              <span class="label">保持原图比例</span>
               <label class="checkbox">
                 <input id="keepOriginalAspect" type="checkbox" />
-                <span>启用后：锁定比例为“最接近原图”，网页端裁切回原图比例，并提供查看原始输出；同时禁用 JSON 模式</span>
+                <span>锁定比例设置与禁用 JSON；有图时：白边填充 + 裁切回原图比例</span>
               </label>
-              <span class="hint">未上传图片时：该选项不会生效（不会自动取消，也不会置灰）。</span>
             </div>
 
             <label class="field">
@@ -140,7 +135,6 @@
                 <option value="2K">2K</option>
                 <option value="4K">4K</option>
               </select>
-              <span class="hint">4K 成本更高、延迟更大。</span>
             </label>
 
             <label class="field">
@@ -166,7 +160,6 @@
             <span class="label">请求体 JSON（将直接作为 POST body 发送）</span>
             <textarea id="requestBodyJson" rows="16" spellcheck="false"
               placeholder='例如：{"contents":[{"role":"user","parts":[{"text":"..."}]}],"generationConfig":{"responseModalities":["Image"]}}'></textarea>
-            <span class="hint">提示：Host / Key 不在此 JSON 中；仍由上方固定配置决定。</span>
           </label>
         </div>
 
@@ -229,7 +222,7 @@
 
     <footer class="footer">
       <p class="footnote">
-        说明：本页面仅做前端调用封装。建议对 API Key 做来源域名限制，或使用自建反代/Worker 将 Key 置于服务端。
+        说明：本页面仅做前端调用封装。建议对 API Key 做来源域名限制，或使用服务端代理。
       </p>
     </footer>
   </main>
