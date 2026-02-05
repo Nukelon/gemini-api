@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Gemini 3 Pro Image Preview API 调用器</title>
-  <meta name="description" content="基于 GitHub Pages 的 Gemini 3 调用器：图像生成/编辑 + 图片反推提示词" />
+  <title>Gemini 3 调用器（图像生成 + 提示词反推）</title>
+  <meta name="description" content="GitHub Pages 上的 Gemini 3 调用器：图像生成/编辑 + 图片反推提示词" />
   <link rel="stylesheet" href="./style.css" />
 </head>
 
@@ -13,14 +13,15 @@
     <div class="container">
       <div class="title-row">
         <div class="title-left">
-          <h1 class="title">Gemini 3 调用器（图像生成 + 反推提示词）</h1>
+          <h1 class="title">Gemini 3 调用器（图像生成 + 提示词反推）</h1>
           <p class="subtitle">
-            支持：Host / API Key / 系统提示词 / 提示词（可空）/ 多图输入 / 生成参数（仅图像模式）/ 预设 / JSON 请求体 / 特殊模式：反推提示词（gemini-3-pro-preview）
+            支持：Host / API Key / 多图输入 / 图像生成（gemini-3-pro-image-preview）/ 提示词反推（gemini-3-pro-preview）/ 预设 / JSON 请求体
           </p>
         </div>
 
-        <div class="presetbar" aria-label="预设工具栏">
-          <select id="presetSelect" class="presetSelect" title="选择预设/模式">
+        <!-- 仅用于“图像生成”模式的预设工具栏 -->
+        <div id="presetbarGen" class="presetbar" aria-label="图像生成预设工具栏">
+          <select id="presetSelect" class="presetSelect" title="选择图像生成预设">
             <option value="">（无预设）</option>
           </select>
           <button id="presetSave" type="button" class="btn secondary">保存为预设</button>
@@ -46,7 +47,7 @@
           <label class="field">
             <span class="label">API 主机地址（可选）</span>
             <input id="apiHost" type="text" inputmode="url" placeholder="留空则使用 Google 官方主机" />
-            <span class="hint">可填你的反代/网关域名；留空默认官方。</span>
+            <span class="hint">可填入你的反代/网关域名；留空默认官方。</span>
           </label>
 
           <label class="field">
@@ -66,116 +67,144 @@
           </label>
         </div>
 
-        <div class="modebar" role="tablist" aria-label="请求体编辑模式">
-          <button id="modeForm" type="button" class="seg active" role="tab" aria-selected="true">表单模式</button>
-          <button id="modeJson" type="button" class="seg" role="tab" aria-selected="false">JSON 模式</button>
+        <!-- 顶层功能选项卡 -->
+        <div class="tabbar modebar" role="tablist" aria-label="功能选项卡">
+          <button id="tabGen" type="button" class="seg active" role="tab" aria-selected="true">图像生成</button>
+          <button id="tabDesc" type="button" class="seg" role="tab" aria-selected="false">提示词反推</button>
         </div>
 
-        <div id="formModeWrap">
+        <!-- 共用：输入图片 -->
+        <div class="grid">
+          <div class="field full">
+            <span class="label">输入图片（图像生成可选；提示词反推必选；支持多张）</span>
+            <div id="dropZone" class="dropzone" role="button" tabindex="0">
+              <div class="dz-main">
+                <strong>拖拽图片到这里</strong>
+                <span>或点击选择文件（可多选：PNG/JPEG/WebP/HEIC 等）</span>
+              </div>
+              <input id="imageFile" type="file" accept="image/*" multiple />
+            </div>
+
+            <div id="imagesPreview" class="previewlist hidden">
+              <div class="previewlist-head">
+                <div id="imagesMeta"></div>
+                <div class="previewlist-actions">
+                  <button id="clearImages" type="button" class="btn secondary">清空图片</button>
+                </div>
+              </div>
+              <div id="imagesPreviewGrid" class="previewgrid"></div>
+            </div>
+
+            <span class="hint">会按选择顺序将多张图片追加为多个 inline_data parts 发送。</span>
+          </div>
+        </div>
+
+        <!-- ============== 图像生成面板 ============== -->
+        <div id="paneGen">
+          <div class="modebar" role="tablist" aria-label="请求体编辑模式（仅图像生成）">
+            <button id="modeForm" type="button" class="seg active" role="tab" aria-selected="true">表单模式</button>
+            <button id="modeJson" type="button" class="seg" role="tab" aria-selected="false">JSON 模式</button>
+          </div>
+
+          <div id="formModeWrap">
+            <div class="grid">
+              <label class="field full">
+                <span class="label">系统提示词（可选）</span>
+                <textarea id="systemPrompt" rows="3" placeholder="例如：你是一个专业平面设计师，输出图片需要干净背景、柔光、高清。"></textarea>
+              </label>
+
+              <label class="field full">
+                <span class="label">提示词（可选）</span>
+                <textarea id="prompt" rows="5" placeholder="可留空：将传入空文本。若上传图片，可仅通过系统提示词/图片进行编辑。"></textarea>
+                <span class="hint">若留空，将仍发送一个空文本 part（{ "text": "" }）。</span>
+              </label>
+
+              <label class="field">
+                <span class="label">生成图片比例（可选）</span>
+                <select id="aspectRatio">
+                  <option value="">默认（模型自行选择）</option>
+                  <option value="1:1">1:1</option>
+                  <option value="2:3">2:3</option>
+                  <option value="3:2">3:2</option>
+                  <option value="3:4">3:4</option>
+                  <option value="4:3">4:3</option>
+                  <option value="4:5">4:5</option>
+                  <option value="5:4">5:4</option>
+                  <option value="9:16">9:16</option>
+                  <option value="16:9">16:9</option>
+                  <option value="21:9">21:9</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="label">分辨率（可选）</span>
+                <select id="imageSize">
+                  <option value="">默认（1K）</option>
+                  <option value="1K">1K</option>
+                  <option value="2K">2K</option>
+                  <option value="4K">4K</option>
+                </select>
+                <span class="hint">4K 成本更高、延迟更大。</span>
+              </label>
+
+              <label class="field">
+                <span class="label">Temperature（可选，0–2）</span>
+                <input id="temperature" type="number" inputmode="decimal" min="0" max="2" step="0.1" placeholder="留空使用模型默认" />
+              </label>
+
+              <label class="field">
+                <span class="label">TopP（可选，0–1）</span>
+                <input id="topP" type="number" inputmode="decimal" min="0" max="1" step="0.05" placeholder="留空使用模型默认" />
+              </label>
+            </div>
+          </div>
+
+          <div id="jsonModeWrap" class="hidden">
+            <div class="jsonbar">
+              <button id="jsonFormat" type="button" class="btn secondary">格式化 JSON</button>
+              <button id="jsonFromForm" type="button" class="btn secondary">从表单同步</button>
+              <button id="jsonToForm" type="button" class="btn secondary">回填到表单</button>
+            </div>
+
+            <label class="field full">
+              <span class="label">请求体 JSON（将直接作为 POST body 发送）</span>
+              <textarea id="requestBodyJson" rows="16" spellcheck="false"
+                placeholder='例如：{"contents":[{"role":"user","parts":[{"text":""}]}],"generationConfig":{"responseModalities":["Image"]}}'></textarea>
+              <span class="hint">提示：Host / Key 不在此 JSON 中；仍由上方固定配置决定。</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- ============== 提示词反推面板 ============== -->
+        <div id="paneDesc" class="hidden">
           <div class="grid">
-            <label class="field full">
-              <span class="label">系统提示词（可选）</span>
-              <textarea id="systemPrompt" rows="3" placeholder="例如：你是一个专业平面设计师…… / 或对反推输出的格式要求……"></textarea>
-            </label>
-
-            <label class="field full">
-              <span class="label">提示词（可选）</span>
-              <textarea id="prompt" rows="5" placeholder="可留空：将传入空文本。反推模式下可写补充要求，如“更偏电影感”“尽量保留logo”等。"></textarea>
-              <span class="hint">若留空，将仍发送一个空文本 part（{ "text": "" }）。</span>
-            </label>
-
-            <!-- 反推模式专用 -->
-            <label class="field full describeOnly hidden" id="describeTargetWrap">
-              <span class="label">反推提示词选项（仅在“反推提示词模式”启用）</span>
-              <select id="describeTarget">
-                <option value="full">全图（主体 + 动作 + 背景 + 风格/画风）</option>
-                <option value="background">仅背景（环境/场景/光照/材质/氛围）</option>
-                <option value="person">仅人物（外观/服饰/姿态/表情/动作）</option>
-                <option value="style">仅风格（风格体系 + 关键词簇 + 可迁移风格模板）</option>
-                <option value="rendering">仅画风（渲染/笔触/线稿/材质/颗粒/镜头质感等极细节）</option>
+            <label class="field">
+              <span class="label">反推预设（通过覆盖系统提示词生效）</span>
+              <select id="descPreset">
+                <option value="full">全图（默认）</option>
+                <option value="background">仅背景</option>
+                <option value="person">仅人物</option>
+                <option value="style">仅风格/画风（合并）</option>
               </select>
               <span class="hint">
-                反推模式会调用 gemini-3-pro-preview，要求至少上传 1 张图片；输出会给出可直接用于 gemini-3-pro-image-preview 的超详细“格式化提示词”。
+                该预设会把下方“系统提示词”替换为英文高精度反推指令；你可以在替换后继续手动微调。
               </span>
             </label>
 
-            <div class="field full">
-              <span class="label">输入图片（可选；反推模式必选；支持多张）</span>
-              <div id="dropZone" class="dropzone" role="button" tabindex="0">
-                <div class="dz-main">
-                  <strong>拖拽图片到这里</strong>
-                  <span>或点击选择文件（可多选：PNG/JPEG/WebP/HEIC 等）</span>
-                </div>
-                <input id="imageFile" type="file" accept="image/*" multiple />
-              </div>
-
-              <div id="imagesPreview" class="previewlist hidden">
-                <div class="previewlist-head">
-                  <div id="imagesMeta"></div>
-                  <div class="previewlist-actions">
-                    <button id="clearImages" type="button" class="btn secondary">清空图片</button>
-                  </div>
-                </div>
-                <div id="imagesPreviewGrid" class="previewgrid"></div>
-              </div>
-
-              <span class="hint">会按选择顺序将多张图片追加为多个 inline_data parts 发送。</span>
-            </div>
-
-            <!-- 图像生成专用参数（反推模式会隐藏） -->
-            <label class="field genOnly">
-              <span class="label">生成图片比例（可选，仅图像模式）</span>
-              <select id="aspectRatio">
-                <option value="">默认（模型自行选择）</option>
-                <option value="1:1">1:1</option>
-                <option value="2:3">2:3</option>
-                <option value="3:2">3:2</option>
-                <option value="3:4">3:4</option>
-                <option value="4:3">4:3</option>
-                <option value="4:5">4:5</option>
-                <option value="5:4">5:4</option>
-                <option value="9:16">9:16</option>
-                <option value="16:9">16:9</option>
-                <option value="21:9">21:9</option>
-              </select>
+            <label class="field">
+              <span class="label">提示词（可选，作为补充要求）</span>
+              <textarea id="descPrompt" rows="5" placeholder="可留空。可写：更偏电影感/更接近二次元/强调服装细节/保留logo等。"></textarea>
+              <span class="hint">反推输出要求：仅输出英文提示词本体，不输出负面提示词、也不输出解释。</span>
             </label>
 
-            <label class="field genOnly">
-              <span class="label">分辨率（可选，仅图像模式）</span>
-              <select id="imageSize">
-                <option value="">默认（1K）</option>
-                <option value="1K">1K</option>
-                <option value="2K">2K</option>
-                <option value="4K">4K</option>
-              </select>
-              <span class="hint">4K 成本更高、延迟更大。</span>
-            </label>
-
-            <label class="field genOnly">
-              <span class="label">Temperature（可选，仅图像模式，0–2）</span>
-              <input id="temperature" type="number" inputmode="decimal" min="0" max="2" step="0.1" placeholder="留空使用模型默认" />
-            </label>
-
-            <label class="field genOnly">
-              <span class="label">TopP（可选，仅图像模式，0–1）</span>
-              <input id="topP" type="number" inputmode="decimal" min="0" max="1" step="0.05" placeholder="留空使用模型默认" />
+            <label class="field full">
+              <span class="label">系统提示词（英文，反推模式核心）</span>
+              <textarea id="descSystemPrompt" rows="10" spellcheck="false"></textarea>
+              <span class="hint">
+                会调用 gemini-3-pro-preview（非图像生成模型）。反推模式必须至少上传 1 张图片。
+              </span>
             </label>
           </div>
-        </div>
-
-        <div id="jsonModeWrap" class="hidden">
-          <div class="jsonbar">
-            <button id="jsonFormat" type="button" class="btn secondary">格式化 JSON</button>
-            <button id="jsonFromForm" type="button" class="btn secondary">从表单同步</button>
-            <button id="jsonToForm" type="button" class="btn secondary">回填到表单</button>
-          </div>
-
-          <label class="field full">
-            <span class="label">请求体 JSON（将直接作为 POST body 发送）</span>
-            <textarea id="requestBodyJson" rows="16" spellcheck="false"
-              placeholder='例如：{"contents":[{"role":"user","parts":[{"text":""}]}]}'></textarea>
-            <span class="hint">提示：Host / Key 不在此 JSON 中；仍由上方固定配置决定。</span>
-          </label>
         </div>
 
         <div class="actions">
