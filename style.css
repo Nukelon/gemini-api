@@ -24,10 +24,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-.container {
-  width: min(1100px, calc(100% - 24px));
-  margin: 0 auto;
-}
+.container { width: min(1100px, calc(100% - 24px)); margin: 0 auto; }
 
 .header {
   padding: 22px 0 16px;
@@ -49,18 +46,8 @@ body {
   min-width: min(620px, 100%);
 }
 
-.title {
-  margin: 0;
-  font-size: 20px;
-  letter-spacing: 0.2px;
-}
-
-.subtitle {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.5;
-  font-size: 13px;
-}
+.title { margin: 0; font-size: 20px; letter-spacing: 0.2px; }
+.subtitle { margin: 0; color: var(--muted); line-height: 1.5; font-size: 13px; }
 
 .presetbar {
   display: flex;
@@ -87,19 +74,14 @@ body {
 
 .card {
   margin: 18px 0;
-  background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 40%),
-              var(--card);
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 40%), var(--card);
   border: 1px solid var(--border2);
-  border-radius: var(--radius);
+  border-radius: 16px;
   box-shadow: var(--shadow);
   padding: 18px;
 }
 
-.section-title {
-  margin: 0 0 14px;
-  font-size: 16px;
-  letter-spacing: 0.2px;
-}
+.section-title { margin: 0 0 14px; font-size: 16px; letter-spacing: 0.2px; }
 
 .grid {
   display: grid;
@@ -110,17 +92,8 @@ body {
 .field { display: grid; gap: 8px; }
 .field.full { grid-column: 1 / -1; }
 
-.label {
-  font-size: 13px;
-  color: rgba(233, 237, 245, 0.92);
-}
-
-.hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.4;
-}
+.label { font-size: 13px; color: rgba(233, 237, 245, 0.92); }
+.hint { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.4; }
 
 input[type="text"],
 input[type="password"],
@@ -144,12 +117,7 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(140, 160, 255, 0.12);
 }
 
-.row {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  flex-wrap: wrap;
-}
+.row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 
 .checkbox {
   display: inline-flex;
@@ -178,18 +146,9 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
   font-size: 13px;
 }
-.seg.active {
-  color: var(--text);
-  background: rgba(140, 160, 255, 0.14);
-}
+.seg.active { color: var(--text); background: rgba(140, 160, 255, 0.14); }
 
-.jsonbar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin: 4px 0 10px;
-}
+.jsonbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 0 10px; }
 
 .dropzone {
   position: relative;
@@ -207,20 +166,11 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(140, 160, 255, 0.12);
 }
 
-.dropzone .dz-main {
-  display: grid;
-  gap: 4px;
-  color: var(--muted);
-}
+.dropzone .dz-main { display: grid; gap: 4px; color: var(--muted); }
 .dropzone strong { color: var(--text); font-size: 13px; }
 .dropzone span { font-size: 12px; }
 
-.dropzone input[type="file"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
+.dropzone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
 .previewlist {
   margin-top: 10px;
@@ -278,13 +228,7 @@ input:focus, select:focus, textarea:focus {
   max-width: 65%;
 }
 
-.actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
+.actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
 
 .btn {
   border: 1px solid var(--border2);
@@ -297,11 +241,7 @@ input:focus, select:focus, textarea:focus {
   user-select: none;
 }
 
-.btn.primary {
-  border-color: rgba(140, 160, 255, 0.35);
-  background: rgba(140, 160, 255, 0.12);
-}
-
+.btn.primary { border-color: rgba(140, 160, 255, 0.35); background: rgba(140, 160, 255, 0.12); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn.secondary:hover, .btn.primary:hover { filter: brightness(1.1); }
 
@@ -350,11 +290,7 @@ input:focus, select:focus, textarea:focus {
   overflow: auto;
 }
 
-.gallery {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
+.gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 
 .imgcard {
   border: 1px solid var(--border2);
@@ -375,11 +311,7 @@ input:focus, select:focus, textarea:focus {
   flex-wrap: wrap;
 }
 
-.link {
-  color: rgba(160, 190, 255, 0.95);
-  text-decoration: none;
-  font-size: 13px;
-}
+.link { color: rgba(160, 190, 255, 0.95); text-decoration: none; font-size: 13px; }
 .link:hover { text-decoration: underline; }
 
 .details { margin-top: 14px; border-top: 1px solid var(--border2); padding-top: 12px; }
