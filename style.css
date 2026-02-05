@@ -138,6 +138,8 @@ input:focus, select:focus, textarea:focus {
   overflow: hidden;
 }
 
+.tabbar { margin-top: 12px; }
+
 .seg {
   border: 0;
   background: transparent;
